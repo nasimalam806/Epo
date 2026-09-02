@@ -20,9 +20,12 @@ def keep_alive():
     t.start()
 
 # --- Yahan Apna Bot Data Dalein ---
-API_ID = "30072361"        # Integer format me
-API_HASH = "89172ae56cce451a933e4aa2557c1721"    # String format me
-BOT_TOKEN = "8496195765:AAEYHU0Sc4LYWBby_LtQ6L1W7yqk6dcPBro"  # String format me
+# --- Yahan Apna Bot Data Dalein ---
+# Ab hum token code me nahi daalenge, balki Render se automatically lenge
+API_ID = int(os.environ.get("API_ID", 0))        
+API_HASH = os.environ.get("API_HASH", "")    
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")  
+
 
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
