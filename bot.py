@@ -8,8 +8,7 @@ from flask import Flask
 from threading import Thread
 
 # --- FFmpeg Fix (Video aur Audio jodne ke liye) ---
-import static_ffmpeg
-static_ffmpeg.add_paths()
+
 # ------------------------------------------------
 
 # --- Dummy Web Server ---
