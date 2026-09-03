@@ -45,13 +45,14 @@ async def download_video(client, message):
 
     # Naya Smart Format jo ffmpeg ka use karega
        # Naya Smart Format (Bot ko Real Browser jaisa dikhane ke liye)
+        # Naya Smart Format with Cookies
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
         'format': 'bestvideo+bestaudio/best', 
         'merge_output_format': 'mp4',
         'quiet': True,
         'noplaylist': True,
-        # Niche wali lines bot ko Google Chrome browser ka bhes pehnayengi
+        'cookiefile': 'cookies.txt',  # <--- YE VIP PASS HAI
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
