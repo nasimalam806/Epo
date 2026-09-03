@@ -2,3 +2,4 @@ pyrogram
 tgcrypto
 flask
 git+https://github.com/yt-dlp/yt-dlp.git
+static-ffmpeg
