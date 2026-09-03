@@ -1,3 +1,8 @@
+import asyncio
+# --- PYROGRAM PYTHON 3.10+ FIX ---
+asyncio.set_event_loop(asyncio.new_event_loop())
+# ---------------------------------
+
 import os
 from pyrogram import Client, filters
 import yt_dlp
@@ -20,12 +25,9 @@ def keep_alive():
     t.start()
 
 # --- Yahan Apna Bot Data Dalein ---
-# --- Yahan Apna Bot Data Dalein ---
-# Ab hum token code me nahi daalenge, balki Render se automatically lenge
 API_ID = int(os.environ.get("API_ID", 0))        
 API_HASH = os.environ.get("API_HASH", "")    
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")  
-
 
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -66,7 +68,6 @@ async def download_video(client, message):
 
 # --- Bot aur Web Server dono ek sath run karna ---
 if __name__ == "__main__":
-    keep_alive() # Flask web server chalu karega
+    keep_alive() 
     print("Bot is running...")
-    app.run()    # Telegram bot chalu karega
-    
+    app.run()    
