@@ -40,11 +40,13 @@ async def download_video(client, message):
     url = message.text
     msg = await message.reply_text("⏳ Downloading video... Please wait.")
 
-    ydl_opts = {
+        ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
-        'format': 'best',
-        'quiet': True
+        'format': 'b[ext=mp4]/b',  # Ye single file me video+audio dhundhega
+        'quiet': True,
+        'noplaylist': True         # Pura playlist download hone se rokega
     }
+
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
