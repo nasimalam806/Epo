@@ -1,7 +1,5 @@
 import asyncio
-# --- PYROGRAM PYTHON 3.10+ FIX ---
 asyncio.set_event_loop(asyncio.new_event_loop())
-# ---------------------------------
 
 import os
 from pyrogram import Client, filters
@@ -9,7 +7,12 @@ import yt_dlp
 from flask import Flask
 from threading import Thread
 
-# --- Dummy Web Server (Render ko awake rakhne ke liye) ---
+# --- FFmpeg Fix (Video aur Audio jodne ke liye) ---
+import static_ffmpeg
+static_ffmpeg.add_paths()
+# ------------------------------------------------
+
+# --- Dummy Web Server ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -40,18 +43,22 @@ async def download_video(client, message):
     url = message.text
     msg = await message.reply_text("⏳ Downloading video... Please wait.")
 
+    # Naya Smart Format jo ffmpeg ka use karega
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
-        'format': 'b[ext=mp4]/b',  # Ye single file me video+audio dhundhega
+        'format': 'bestvideo+bestaudio/best', 
+        'merge_output_format': 'mp4',
         'quiet': True,
-        'noplaylist': True         # Pura playlist download hone se rokega
+        'noplaylist': True
     }
-
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
+            # Agar file merge hui hai toh ext change ho sakta hai, ise confirm karne ke liye:
+            if not os.path.exists(filename):
+                filename = filename.rsplit('.', 1)[0] + '.mp4'
 
         await msg.edit_text("📤 Uploading to Telegram...")
         await client.send_video(
@@ -68,8 +75,7 @@ async def download_video(client, message):
     except Exception as e:
         await msg.edit_text(f"❌ Error: {str(e)}")
 
-# --- Bot aur Web Server dono ek sath run karna ---
 if __name__ == "__main__":
     keep_alive() 
     print("Bot is running...")
-    app.run()    
+    app.run() 
