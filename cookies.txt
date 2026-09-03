@@ -1,0 +1,10 @@
+# Netscape HTTP Cookie File
+# https://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file! Do not edit.
+
+www.showcamrips.com	FALSE	/	FALSE	1788550920	cntmoi	IN
+www.showcamrips.com	FALSE	/	FALSE	1788810120	cntUSrnd	0
+www.showcamrips.com	FALSE	/	FALSE	1788482520	video_ztot	3
+www.showcamrips.com	FALSE	/	FALSE	1788468180	video_z	3
+.showcamrips.com	TRUE	/	FALSE	1823024521	_ga_BLJRPYNM4C	GS2.1.s1788464460$o1$g1$t1788464521$j60$l0$h0
+.showcamrips.com	TRUE	/	FALSE	1823024521	_ga	GA1.1.302418131.1788464460
