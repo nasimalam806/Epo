@@ -2,9 +2,14 @@
 # https://curl.haxx.se/rfc/cookie_spec.html
 # This is a generated file! Do not edit.
 
-www.showcamrips.com	FALSE	/	FALSE	1788550920	cntmoi	IN
-www.showcamrips.com	FALSE	/	FALSE	1788810120	cntUSrnd	0
-www.showcamrips.com	FALSE	/	FALSE	1788482520	video_ztot	3
-www.showcamrips.com	FALSE	/	FALSE	1788468180	video_z	3
-.showcamrips.com	TRUE	/	FALSE	1823024521	_ga_BLJRPYNM4C	GS2.1.s1788464460$o1$g1$t1788464521$j60$l0$h0
-.showcamrips.com	TRUE	/	FALSE	1823024521	_ga	GA1.1.302418131.1788464460
+www.showcamrips.com	FALSE	/	FALSE	1788551580	cntmoi	IN
+www.showcamrips.com	FALSE	/	FALSE	1788810780	cntUSrnd	0
+www.showcamrips.com	FALSE	/	FALSE	1788483180	video_ztot	4
+www.showcamrips.com	FALSE	/	FALSE	1788468843	video_z	10
+.showcamrips.com	TRUE	/	FALSE	1823025183	_ga_BLJRPYNM4C	GS2.1.s1788464460$o1$g1$t1788465183$j58$l0$h0
+.showcamrips.com	TRUE	/	FALSE	1823025181	_ga	GA1.1.302418131.1788464460
+www.showcamrips.com	FALSE	/	FALSE	1800465183	video_clk_p	1
+www.showcamrips.com	FALSE	/	FALSE	1788468783	_.mypopunder	1
+www.showcamrips.com	FALSE	/	FALSE	1788549783	_.mypopunderCap	1
+www.showcamrips.com	FALSE	/	FALSE	1791057187	clcrec	[{"sitename":"Stripchat","model":"sweethot___","id":"1650032","time":"2026-09-03T19:53:07.232Z"}]
+www.showcamrips.com	FALSE	/	FALSE	1788551607	actionTaken	true
