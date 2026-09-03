@@ -40,7 +40,7 @@ async def download_video(client, message):
     url = message.text
     msg = await message.reply_text("⏳ Downloading video... Please wait.")
 
-        ydl_opts = {
+    ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
         'format': 'b[ext=mp4]/b',  # Ye single file me video+audio dhundhega
         'quiet': True,
