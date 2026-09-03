@@ -44,12 +44,20 @@ async def download_video(client, message):
     msg = await message.reply_text("⏳ Downloading video... Please wait.")
 
     # Naya Smart Format jo ffmpeg ka use karega
+       # Naya Smart Format (Bot ko Real Browser jaisa dikhane ke liye)
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
         'format': 'bestvideo+bestaudio/best', 
         'merge_output_format': 'mp4',
         'quiet': True,
-        'noplaylist': True
+        'noplaylist': True,
+        # Niche wali lines bot ko Google Chrome browser ka bhes pehnayengi
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate'
+        }
     }
 
     try:
