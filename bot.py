@@ -4,27 +4,6 @@ asyncio.set_event_loop(asyncio.new_event_loop())
 import os
 from pyrogram import Client, filters
 import yt_dlp
-from flask import Flask
-from threading import Thread
-
-# --- FFmpeg Fix (Video aur Audio jodne ke liye) ---
-
-# ------------------------------------------------
-
-# --- Dummy Web Server ---
-web_app = Flask(__name__)
-
-@web_app.route('/')
-def home():
-    return "Bot is running 24/7!"
-
-def run_web():
-    port = int(os.environ.get("PORT", 8080))
-    web_app.run(host="0.0.0.0", port=port)
-
-def keep_alive():
-    t = Thread(target=run_web)
-    t.start()
 
 # --- Yahan Apna Bot Data Dalein ---
 API_ID = int(os.environ.get("API_ID", 0))        
@@ -42,21 +21,15 @@ async def download_video(client, message):
     url = message.text
     msg = await message.reply_text("⏳ Downloading video... Please wait.")
 
-    # Naya Smart Format jo ffmpeg ka use karega
-       # Naya Smart Format (Bot ko Real Browser jaisa dikhane ke liye)
-        # Naya Smart Format with Cookies
+    # Smart Format 
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
         'format': 'bestvideo+bestaudio/best', 
         'merge_output_format': 'mp4',
         'quiet': True,
         'noplaylist': True,
-        'cookiefile': 'cookies.txt',  # <--- YE VIP PASS HAI
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Sec-Fetch-Mode': 'navigate'
         }
     }
 
@@ -64,7 +37,6 @@ async def download_video(client, message):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
-            # Agar file merge hui hai toh ext change ho sakta hai, ise confirm karne ke liye:
             if not os.path.exists(filename):
                 filename = filename.rsplit('.', 1)[0] + '.mp4'
 
@@ -83,7 +55,7 @@ async def download_video(client, message):
     except Exception as e:
         await msg.edit_text(f"❌ Error: {str(e)}")
 
+# --- Bot ko run karna ---
 if __name__ == "__main__":
-    keep_alive() 
-    print("Bot is running...")
+    print("Bot is running purely on Termux! Send a link on Telegram...")
     app.run() 
