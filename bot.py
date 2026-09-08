@@ -19,6 +19,9 @@ def extract_info_only(url):
         'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
         'quiet': True,
         'noplaylist': True,
+        # Cloudflare Bypass ke liye Nayi Lines:
+        'impersonate': 'chrome',  # Ye bot ko Chrome browser jaisa banata hai
+        'extractor_args': {'generic': ['impersonate']}, 
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
@@ -30,10 +33,13 @@ def extract_info_only(url):
 def download_with_ytdlp(url):
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
-        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best', # Quality 720p par limit kardi
+        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best', 
         'merge_output_format': 'mp4',
         'quiet': True,
         'noplaylist': True,
+        # Cloudflare Bypass ke liye Nayi Lines:
+        'impersonate': 'chrome',
+        'extractor_args': {'generic': ['impersonate']},
         'external_downloader': 'aria2c',
         'external_downloader_args': ['-x', '16', '-s', '16', '-k', '1M'],
         'http_headers': {
@@ -77,9 +83,8 @@ async def download_video(client, message):
                         supports_streaming=True
                     )
                     await msg.delete()
-                    continue # Agar kamyab hua, toh agle link par jao
+                    continue 
                 except Exception:
-                    # Agar Telegram server ne 20MB limit ya security ki wajah se fail kiya toh aage badho
                     pass 
 
             # TRY 2: Local 720p Fast Download
@@ -102,5 +107,5 @@ async def download_video(client, message):
             await msg.edit_text(f"❌ Error: {str(e)}")
 
 if __name__ == "__main__":
-    print("Bot is running purely on Termux with Smart Dual-Mode! Send links...")
+    print("Bot is running purely on Termux with Smart Dual-Mode and Cloudflare Bypass! Send links...")
     app.run()
