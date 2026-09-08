@@ -2,9 +2,11 @@ import asyncio
 asyncio.set_event_loop(asyncio.new_event_loop())
 
 import os
-import traceback  # <--- NAYA: Andar ka error nikalne ke liye
 from pyrogram import Client, filters
 import yt_dlp
+
+# NAYA: yt-dlp ka naya impersonate class (Cloudflare ko handle karne ke liye)
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 API_ID = int(os.environ.get("API_ID", 0))        
 API_HASH = os.environ.get("API_HASH", "")    
@@ -12,12 +14,14 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
+# Func 1: Sirf URL nikalna (Bina download kiye)
 def extract_info_only(url):
     ydl_opts = {
         'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
         'quiet': True,
         'noplaylist': True,
-        'impersonate': 'chrome',
+        # THE FIX: String ki jagah ImpersonateTarget ka istemaal
+        'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'generic': ['impersonate']},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -26,6 +30,7 @@ def extract_info_only(url):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
 
+# Func 2: 720p me fast download karna
 def download_with_ytdlp(url):
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
@@ -33,7 +38,8 @@ def download_with_ytdlp(url):
         'merge_output_format': 'mp4',
         'quiet': True,
         'noplaylist': True,
-        'impersonate': 'chrome',
+        # THE FIX: String ki jagah ImpersonateTarget ka istemaal
+        'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'generic': ['impersonate']},
         'external_downloader': 'aria2c',
         'external_downloader_args': ['-x', '16', '-s', '16', '-k', '1M'],
@@ -97,10 +103,8 @@ async def download_video(client, message):
                 os.remove(filename)
 
         except Exception as e:
-            # Yahan humne Traceback add kiya hai taaki lamba aur asli error dikhe
-            error_details = traceback.format_exc()
-            await msg.edit_text(f"❌ Real Error Details:\n`{error_details[-1000:]}`")
+            await msg.edit_text(f"❌ Error: {str(e)}")
 
 if __name__ == "__main__":
-    print("Bot is running purely on Termux with Debug Mode! Send links...")
+    print("Bot is running with Advanced Cloudflare Bypass! Send links...")
     app.run()
