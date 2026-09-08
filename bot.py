@@ -1,9 +1,10 @@
 import asyncio
+# YE LINE SABSE UPAR HONI CHAHIYE (Pyrogram import hone se pehle)
+asyncio.set_event_loop(asyncio.new_event_loop())
+
 import os
 from pyrogram import Client, filters
 import yt_dlp
-
-asyncio.set_event_loop(asyncio.new_event_loop())
 
 # --- Yahan Apna Bot Data Dalein ---
 API_ID = int(os.environ.get("API_ID", 0))        
@@ -81,7 +82,7 @@ async def download_video(client, message):
                     # Agar Telegram server ne 20MB limit ya security ki wajah se fail kiya toh aage badho
                     pass 
 
-            # TRY 2: Local 720p Fast Download (Agar Try 1 fail ho jaye)
+            # TRY 2: Local 720p Fast Download
             await msg.edit_text("⚡ Direct Link fail hua. 720p me fast download shuru kar raha hoon...")
             info, filename = await asyncio.to_thread(download_with_ytdlp, url)
             
