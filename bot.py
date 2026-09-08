@@ -1,27 +1,24 @@
 import asyncio
-# YE LINE SABSE UPAR HONI CHAHIYE (Pyrogram import hone se pehle)
 asyncio.set_event_loop(asyncio.new_event_loop())
 
 import os
+import traceback  # <--- NAYA: Andar ka error nikalne ke liye
 from pyrogram import Client, filters
 import yt_dlp
 
-# --- Yahan Apna Bot Data Dalein ---
 API_ID = int(os.environ.get("API_ID", 0))        
 API_HASH = os.environ.get("API_HASH", "")    
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")  
 
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Func 1: Sirf URL nikalna (Bina download kiye)
 def extract_info_only(url):
     ydl_opts = {
         'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
         'quiet': True,
         'noplaylist': True,
-        # Cloudflare Bypass ke liye Nayi Lines:
-        'impersonate': 'chrome',  # Ye bot ko Chrome browser jaisa banata hai
-        'extractor_args': {'generic': ['impersonate']}, 
+        'impersonate': 'chrome',
+        'extractor_args': {'generic': ['impersonate']},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
@@ -29,15 +26,13 @@ def extract_info_only(url):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
 
-# Func 2: 720p me fast download karna
 def download_with_ytdlp(url):
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
-        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best', 
+        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
         'merge_output_format': 'mp4',
         'quiet': True,
         'noplaylist': True,
-        # Cloudflare Bypass ke liye Nayi Lines:
         'impersonate': 'chrome',
         'extractor_args': {'generic': ['impersonate']},
         'external_downloader': 'aria2c',
@@ -68,7 +63,6 @@ async def download_video(client, message):
         msg = await message.reply_text(f"🔍 Link check kar raha hoon...\nLink: {url}")
 
         try:
-            # TRY 1: Direct Upload
             info = await asyncio.to_thread(extract_info_only, url)
             direct_url = info.get('url')
             title = info.get('title', 'Unknown Title')
@@ -87,7 +81,6 @@ async def download_video(client, message):
                 except Exception:
                     pass 
 
-            # TRY 2: Local 720p Fast Download
             await msg.edit_text("⚡ Direct Link fail hua. 720p me fast download shuru kar raha hoon...")
             info, filename = await asyncio.to_thread(download_with_ytdlp, url)
             
@@ -104,8 +97,10 @@ async def download_video(client, message):
                 os.remove(filename)
 
         except Exception as e:
-            await msg.edit_text(f"❌ Error: {str(e)}")
+            # Yahan humne Traceback add kiya hai taaki lamba aur asli error dikhe
+            error_details = traceback.format_exc()
+            await msg.edit_text(f"❌ Real Error Details:\n`{error_details[-1000:]}`")
 
 if __name__ == "__main__":
-    print("Bot is running purely on Termux with Smart Dual-Mode and Cloudflare Bypass! Send links...")
+    print("Bot is running purely on Termux with Debug Mode! Send links...")
     app.run()
