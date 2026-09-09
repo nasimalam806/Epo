@@ -1,25 +1,25 @@
 # Python 3.10 ka base image
 FROM python:3.10-slim
 
-# FFmpeg, Aria2c aur zaroori tools install karna
+# System tools and dos2unix install karna
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     aria2 \
     git \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
-# Kaam karne ka folder set karna
 WORKDIR /app
 
-# Requirements copy karke install karna
+# Requirements install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Aapki saari files copy karna (bot.py, web.py, start.sh)
+# Sab kuch copy karo
 COPY . .
 
-# start.sh ko chalane ki permission dena
+# CRUCIAL FIX: start.sh ke line endings fix karna aur permission dena
+RUN dos2unix start.sh
 RUN chmod +x start.sh
 
-# Aakhir me bot start karna
 CMD ["./start.sh"]
