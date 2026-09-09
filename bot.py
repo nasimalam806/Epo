@@ -4,7 +4,7 @@ asyncio.set_event_loop(asyncio.new_event_loop())
 import os
 import time
 import math
-import subprocess # NAYA: External processes ko kill karne ke liye
+import subprocess
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
@@ -26,7 +26,6 @@ app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token
 download_queue = asyncio.Queue()
 queue_display = [] 
 CANCEL_TASKS = {}
-# NAYA: Ek Event loop add kiya upload rokne ke liye
 STOP_UPLOAD = {} 
 
 def format_bytes(size):
@@ -44,7 +43,6 @@ def format_bytes(size):
 # 3. LIVE PROGRESS BAR ENGINE (WITH CANCEL)
 # ==========================================
 async def progress_bar(current, total, msg, start_time, action="Uploading"):
-    # Agar Cancel dabanay par STOP_UPLOAD true ho gaya hai toh error raise karke upload roko
     if STOP_UPLOAD.get(msg.id):
         raise Exception("Upload Cancelled")
 
@@ -78,21 +76,34 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
             pass
 
 # ==========================================
-# 4. YT-DLP CORE (WITH CANCELLATION SUPPORT)
+# 4. YT-DLP CORE (WITH CANCELLATION & DIRECT URL)
 # ==========================================
 class CancelledError(Exception):
     pass
 
-# Custom Logger banaya taaki download progress track kar sakein
 class MyLogger(object):
     def __init__(self, msg_id):
         self.msg_id = msg_id
     def debug(self, msg):
-        # Agar koi process download horaha hai, aur kisi ne cancel dabaya, to kill kardo
         if CANCEL_TASKS.get(self.msg_id):
              raise CancelledError("Download cancelled")
     def warning(self, msg): pass
     def error(self, msg): pass
+
+# NAYA: Direct URL nikalne wala function wapas laya gaya hai
+def extract_info_only(url):
+    ydl_opts = {
+        'format': 'best',
+        'quiet': True,
+        'noplaylist': True,
+        'impersonate': ImpersonateTarget.from_str('chrome'),
+        'extractor_args': {'generic': ['impersonate']},
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        return ydl.extract_info(url, download=False)
 
 def download_with_ytdlp(url, msg_id):
     if CANCEL_TASKS.get(msg_id): return None, None
@@ -110,7 +121,7 @@ def download_with_ytdlp(url, msg_id):
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         },
-        'logger': MyLogger(msg_id) # NAYA: Custom Logger for checking cancel status
+        'logger': MyLogger(msg_id) 
     }
     
     try:
@@ -127,7 +138,6 @@ def download_with_ytdlp(url, msg_id):
     except CancelledError:
         return None, "CANCELLED"
     except Exception as e:
-        # Handle other yt-dlp errors
         return None, None
 
 # ==========================================
@@ -148,23 +158,50 @@ async def process_queue():
 
         try:
             cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")]])
-            await msg.edit_text(f"⚡ Downloading...\nLink: {url}", reply_markup=cancel_markup)
             
-            # Start Download
+            # --- TRY 1: DIRECT URL UPLOAD (WAPAS LAYA GAYA) ---
+            await msg.edit_text("🔍 Checking Direct Link...", reply_markup=cancel_markup)
+            info_direct = await asyncio.to_thread(extract_info_only, url)
+            
+            # Agar user ne is beech cancel daba diya ho
+            if CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
+
+            direct_url = info_direct.get('url')
+            title = info_direct.get('title', 'Unknown Title')
+            
+            if direct_url:
+                try:
+                    await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
+                    await app.send_video(
+                        chat_id=message.chat.id,
+                        video=direct_url,
+                        caption=f"**Title:** {title}",
+                        supports_streaming=True
+                    )
+                    await msg.delete()
+                    # Agar Direct Upload successful ho gaya, toh loop continue kardo (aage ka code nahi chalega)
+                    if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
+                    if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
+                    download_queue.task_done()
+                    continue 
+                except Exception:
+                    # Agar Telegram ne reject kar diya (size zyada hone ki wajah se) toh aage badho
+                    pass 
+
+            # --- TRY 2: LOCAL DOWNLOAD (Agar Direct fail ho gaya) ---
+            await msg.edit_text(f"⚡ Downloading locally...\nLink: {url}", reply_markup=cancel_markup)
+            
             info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id)
             
-            # Agar Cancel hua hai
             if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id):
                 raise Exception("Cancelled by user")
             if not filename:
                 raise Exception("Download failed.")
 
-            # Downloading done, start Uploading
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             
             start_time = time.time()
             
-            # Pyrogram send_video ko handle karo aur agar cancel aaye toh usse pakdo
             try:
                 await app.send_video(
                     chat_id=message.chat.id,
@@ -179,14 +216,13 @@ async def process_queue():
                 if "Upload Cancelled" in str(e):
                     raise Exception("Cancelled by user during upload")
                 else:
-                    raise e # Koi dusra error hoga toh yahan aayega
+                    raise e 
 
             if os.path.exists(filename): os.remove(filename)
 
         except Exception as e:
             if "Cancelled" in str(e):
                  await msg.edit_text("❌ Video Download/Upload Rok Diya Gaya Hai.")
-                 # Aria2c processes ko force kill karna pad sakta hai agar wo hang ho gaye hain
                  subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
                  await msg.edit_text(f"❌ Error: {str(e)}")
@@ -197,17 +233,26 @@ async def process_queue():
             except: pass
             
         finally:
-            # Task complete/cancel hone pe flags remove karein
             if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
             if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
-            download_queue.task_done()
+            # task_done() sirf tabhi call hoga agar try/except block me error aayi ho, ya successful Local Download hua ho.
+            # Direct upload me success par humne pehle hi task_done() call kar diya hai.
+            # A safe way is to check if it's already marked as done, but asyncio.Queue doesn't easily expose this.
+            # So, we need to ensure task_done() is called exactly once per task.
+            pass
+
+        # To ensure task_done is called safely, let's adjust the finally block:
+        try:
+             download_queue.task_done()
+        except ValueError:
+             pass # task_done already called
 
 # ==========================================
 # 6. TELEGRAM COMMANDS & HANDLERS
 # ==========================================
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Hello! Main v2.0 Premium Downloader hoon. Mujhe links bhejiye! (Queue, Resume, & Progress active)")
+    await message.reply_text("Hello! Main v2.0 Premium Downloader hoon. Mujhe links bhejiye! (Queue, Resume, Progress & Smart Dual-Mode active)")
 
 @app.on_message(filters.command("queue"))
 async def show_queue(client, message):
@@ -234,7 +279,6 @@ async def handle_links(client, message):
 @app.on_callback_query(filters.regex(r"^cancel_"))
 async def cancel_callback(client, callback_query):
     msg_id = int(callback_query.data.split("_")[1])
-    # Cancel trigger set karo
     CANCEL_TASKS[msg_id] = True
     STOP_UPLOAD[msg_id] = True 
     await callback_query.answer("Cancelling task... Please wait!", show_alert=True)
@@ -245,9 +289,10 @@ async def cancel_callback(client, callback_query):
 if __name__ == "__main__":
     print("========================================")
     print("Bot is running v2.0 purely on Termux!")
-    print("Features: Queue | Progress Bar | Resume | Active Caching Cancel")
+    print("Features: Queue | Progress Bar | Resume | Cancel | Smart Dual-Mode")
     print("========================================")
     
     loop = asyncio.get_event_loop()
     loop.create_task(process_queue())
     app.run()
+        
