@@ -76,7 +76,7 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
             pass
 
 # ==========================================
-# 4. YT-DLP CORE (WITH CANCELLATION & DIRECT URL)
+# 4. YT-DLP CORE (WITH CANCELLATION & YOUTUBE BYPASS)
 # ==========================================
 class CancelledError(Exception):
     pass
@@ -90,14 +90,17 @@ class MyLogger(object):
     def warning(self, msg): pass
     def error(self, msg): pass
 
-# NAYA: Direct URL nikalne wala function wapas laya gaya hai
 def extract_info_only(url):
     ydl_opts = {
         'format': 'best',
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
-        'extractor_args': {'generic': ['impersonate']},
+        # NAYA: YouTube bot detection ko bypass karne ke liye Android client fake karna
+        'extractor_args': {
+            'generic': ['impersonate'],
+            'youtube': ['player_client=android']
+        },
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
@@ -115,7 +118,11 @@ def download_with_ytdlp(url, msg_id):
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
-        'extractor_args': {'generic': ['impersonate']},
+        # NAYA: YouTube bot detection ko bypass karne ke liye Android client fake karna
+        'extractor_args': {
+            'generic': ['impersonate'],
+            'youtube': ['player_client=android']
+        },
         'external_downloader': 'aria2c',
         'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M'],
         'http_headers': {
@@ -159,15 +166,21 @@ async def process_queue():
         try:
             cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")]])
             
-            # --- TRY 1: DIRECT URL UPLOAD (WAPAS LAYA GAYA) ---
             await msg.edit_text("🔍 Checking Direct Link...", reply_markup=cancel_markup)
-            info_direct = await asyncio.to_thread(extract_info_only, url)
             
-            # Agar user ne is beech cancel daba diya ho
+            try:
+                info_direct = await asyncio.to_thread(extract_info_only, url)
+            except Exception as e:
+                 if "Sign in to confirm" in str(e):
+                      # Agar Direct info check me block ho jaaye toh Local download skip nahi karna chahiye, par hume Local Download par seedha jana padega.
+                      info_direct = {}
+                 else:
+                      raise e
+            
             if CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
 
-            direct_url = info_direct.get('url')
-            title = info_direct.get('title', 'Unknown Title')
+            direct_url = info_direct.get('url') if info_direct else None
+            title = info_direct.get('title', 'Unknown Title') if info_direct else 'Unknown Title'
             
             if direct_url:
                 try:
@@ -179,16 +192,13 @@ async def process_queue():
                         supports_streaming=True
                     )
                     await msg.delete()
-                    # Agar Direct Upload successful ho gaya, toh loop continue kardo (aage ka code nahi chalega)
                     if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
                     if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
                     download_queue.task_done()
                     continue 
                 except Exception:
-                    # Agar Telegram ne reject kar diya (size zyada hone ki wajah se) toh aage badho
                     pass 
 
-            # --- TRY 2: LOCAL DOWNLOAD (Agar Direct fail ho gaya) ---
             await msg.edit_text(f"⚡ Downloading locally...\nLink: {url}", reply_markup=cancel_markup)
             
             info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id)
@@ -196,7 +206,8 @@ async def process_queue():
             if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id):
                 raise Exception("Cancelled by user")
             if not filename:
-                raise Exception("Download failed.")
+                # Agar filename nahi mila (matlab error aayi) toh user ko dikhana hoga.
+                raise Exception("Download failed (Shayad YouTube Block/Age-restricted ho ya link galat ho).")
 
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             
@@ -235,17 +246,12 @@ async def process_queue():
         finally:
             if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
             if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
-            # task_done() sirf tabhi call hoga agar try/except block me error aayi ho, ya successful Local Download hua ho.
-            # Direct upload me success par humne pehle hi task_done() call kar diya hai.
-            # A safe way is to check if it's already marked as done, but asyncio.Queue doesn't easily expose this.
-            # So, we need to ensure task_done() is called exactly once per task.
             pass
 
-        # To ensure task_done is called safely, let's adjust the finally block:
         try:
              download_queue.task_done()
         except ValueError:
-             pass # task_done already called
+             pass
 
 # ==========================================
 # 6. TELEGRAM COMMANDS & HANDLERS
@@ -288,11 +294,10 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.0 purely on Termux!")
-    print("Features: Queue | Progress Bar | Resume | Cancel | Smart Dual-Mode")
+    print("Bot is running v2.0 purely on Render Cloud!")
+    print("Features: Queue | Progress Bar | Resume | Cancel | Smart Dual-Mode | YouTube Bypass")
     print("========================================")
     
     loop = asyncio.get_event_loop()
     loop.create_task(process_queue())
     app.run()
-        
