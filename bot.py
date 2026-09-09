@@ -96,10 +96,9 @@ def extract_info_only(url):
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
-        # NAYA: YouTube bot detection ko bypass karne ke liye Android client fake karna
+        # NAYA BYPASS: iOS aur Android dono ko mix karke try karna
         'extractor_args': {
-            'generic': ['impersonate'],
-            'youtube': ['player_client=android']
+            'youtube': ['player_client=ios,android']
         },
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -118,10 +117,8 @@ def download_with_ytdlp(url, msg_id):
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
-        # NAYA: YouTube bot detection ko bypass karne ke liye Android client fake karna
         'extractor_args': {
-            'generic': ['impersonate'],
-            'youtube': ['player_client=android']
+            'youtube': ['player_client=ios,android']
         },
         'external_downloader': 'aria2c',
         'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M'],
@@ -145,7 +142,8 @@ def download_with_ytdlp(url, msg_id):
     except CancelledError:
         return None, "CANCELLED"
     except Exception as e:
-        return None, None
+        # NAYA: Ab koi error chupega nahi, seedha Telegram par dikhega!
+        return None, f"YTDLP_ERROR: {str(e)}"
 
 # ==========================================
 # 5. BACKGROUND WORKER (QUEUE SYSTEM)
@@ -171,11 +169,8 @@ async def process_queue():
             try:
                 info_direct = await asyncio.to_thread(extract_info_only, url)
             except Exception as e:
-                 if "Sign in to confirm" in str(e):
-                      # Agar Direct info check me block ho jaaye toh Local download skip nahi karna chahiye, par hume Local Download par seedha jana padega.
-                      info_direct = {}
-                 else:
-                      raise e
+                # Agar checking mein error aaye toh direct link cancel, seedha local try karega
+                info_direct = None
             
             if CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
 
@@ -205,9 +200,12 @@ async def process_queue():
             
             if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id):
                 raise Exception("Cancelled by user")
+                
+            # NAYA: Asli error display logic
+            if not info and filename and filename.startswith("YTDLP_ERROR:"):
+                raise Exception(filename.replace("YTDLP_ERROR: ", ""))
             if not filename:
-                # Agar filename nahi mila (matlab error aayi) toh user ko dikhana hoga.
-                raise Exception("Download failed (Shayad YouTube Block/Age-restricted ho ya link galat ho).")
+                raise Exception("Download failed due to an unknown issue.")
 
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             
@@ -236,10 +234,11 @@ async def process_queue():
                  await msg.edit_text("❌ Video Download/Upload Rok Diya Gaya Hai.")
                  subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
+                 # Real error yahan print hoga
                  await msg.edit_text(f"❌ Error: {str(e)}")
             
             try:
-                if 'filename' in locals() and os.path.exists(filename) and filename != "CANCELLED":
+                if 'filename' in locals() and os.path.exists(filename) and not filename.startswith("YTDLP_ERROR:"):
                     os.remove(filename)
             except: pass
             
@@ -295,7 +294,7 @@ async def cancel_callback(client, callback_query):
 if __name__ == "__main__":
     print("========================================")
     print("Bot is running v2.0 purely on Render Cloud!")
-    print("Features: Queue | Progress Bar | Resume | Cancel | Smart Dual-Mode | YouTube Bypass")
+    print("Features: Queue | Progress Bar | Resume | Cancel | Smart Dual-Mode | Advanced YT Bypass")
     print("========================================")
     
     loop = asyncio.get_event_loop()
