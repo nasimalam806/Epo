@@ -21,12 +21,13 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ==========================================
-# 2. QUEUE & CANCEL MANAGER
+# 2. QUEUE, CANCEL MANAGER & URL CACHE
 # ==========================================
 download_queue = asyncio.Queue()
 queue_display = [] 
 CANCEL_TASKS = {}
 STOP_UPLOAD = {} 
+URL_CACHE = {} # NAYA: Button click ke liye link yaad rakhne ka system
 
 def format_bytes(size):
     size = int(size)
@@ -76,7 +77,7 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
             pass
 
 # ==========================================
-# 4. YT-DLP CORE (WITH CANCELLATION & YOUTUBE BYPASS)
+# 4. YT-DLP CORE (RESOLUTION & BYPASS)
 # ==========================================
 class CancelledError(Exception):
     pass
@@ -90,42 +91,59 @@ class MyLogger(object):
     def warning(self, msg): pass
     def error(self, msg): pass
 
-def extract_info_only(url):
+# NAYA: Video ki available quality (resolutions) fetch karne ka function
+def get_formats(url):
     ydl_opts = {
-        'format': 'best', # Isko 'best' hi rakhna zaroori hai taaki Direct Stream me ek single link mile
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
-        'extractor_args': {
-            'youtube': ['player_client=ios,android']
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
+        'extractor_args': {'youtube': ['player_client=ios,android']},
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        formats = info.get('formats', [])
+        resolutions = set()
+        for f in formats:
+            h = f.get('height')
+            if h and isinstance(h, int) and h >= 144:
+                resolutions.add(h)
+        
+        common_res = [144, 240, 360, 480, 720, 1080, 1440, 2160]
+        available_res = sorted([r for r in resolutions if r in common_res])
+        if not available_res:
+            available_res = sorted(list(resolutions)) # Fallback
+            
+        return available_res, info.get('extractor_key', 'Unknown Website')
+
+def extract_info_only(url, selected_res):
+    ydl_opts = {
+        'format': f'best[height<={selected_res}]', # NAYA: Selected quality ka direct link lega
+        'quiet': True,
+        'noplaylist': True,
+        'impersonate': ImpersonateTarget.from_str('chrome'),
+        'extractor_args': {'youtube': ['player_client=ios,android']},
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
 
-def download_with_ytdlp(url, msg_id):
+def download_with_ytdlp(url, msg_id, selected_res):
     if CANCEL_TASKS.get(msg_id): return None, None
     
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
-        # NAYA: Hamesha 1080p (ya usse best) video download karne ke liye
-        'format': 'bestvideo[height<=1080]+bestaudio/best',
-        'merge_output_format': 'mp4', # FFmpeg ko batana ki final file .mp4 me merge kare
+        # NAYA: User ne jo Quality select ki hai wo aayegi yahan
+        'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
+        'merge_output_format': 'mp4',
         'fixup': 'never',
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
-        'extractor_args': {
-            'youtube': ['player_client=ios,android']
-        },
+        'extractor_args': {'youtube': ['player_client=ios,android']},
         'external_downloader': 'aria2c',
         'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M'],
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'},
         'logger': MyLogger(msg_id) 
     }
     
@@ -151,7 +169,7 @@ def download_with_ytdlp(url, msg_id):
 async def process_queue():
     while True:
         task = await download_queue.get()
-        url, message, msg = task
+        url, chat_id, msg, selected_res = task  # NAYA: Unpacking me resolution aur chat_id bhi
         
         if url in queue_display:
             queue_display.remove(url) 
@@ -163,11 +181,10 @@ async def process_queue():
 
         try:
             cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")]])
-            
             await msg.edit_text("🔍 Checking Direct Link...", reply_markup=cancel_markup)
             
             try:
-                info_direct = await asyncio.to_thread(extract_info_only, url)
+                info_direct = await asyncio.to_thread(extract_info_only, url, selected_res)
             except Exception as e:
                 info_direct = None
             
@@ -175,14 +192,23 @@ async def process_queue():
 
             direct_url = info_direct.get('url') if info_direct else None
             title = info_direct.get('title', 'Unknown Title') if info_direct else 'Unknown Title'
+            website = info_direct.get('extractor_key', 'Unknown Website') if info_direct else 'Unknown Website'
+            
+            # NAYA: Pro-level Caption Design
+            caption_text = (
+                f"**🎬 Title:** {title}\n"
+                f"**🌐 Website:** {website}\n"
+                f"**⚙️ Quality:** {selected_res}p\n"
+                f"**🔗 Source:** [Original Link]({url})"
+            )
             
             if direct_url:
                 try:
                     await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
                     await app.send_video(
-                        chat_id=message.chat.id,
+                        chat_id=chat_id,
                         video=direct_url,
-                        caption=f"**Title:** {title}",
+                        caption=caption_text,
                         supports_streaming=True
                     )
                     await msg.delete()
@@ -193,9 +219,9 @@ async def process_queue():
                 except Exception:
                     pass 
 
-            await msg.edit_text(f"⚡ Downloading locally...\nLink: {url}", reply_markup=cancel_markup)
+            await msg.edit_text(f"⚡ Downloading locally...\nQuality: {selected_res}p", reply_markup=cancel_markup)
             
-            info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id)
+            info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id, selected_res)
             
             if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id):
                 raise Exception("Cancelled by user")
@@ -205,15 +231,24 @@ async def process_queue():
             if not filename:
                 raise Exception("Download failed due to an unknown issue.")
 
+            # Caption for Local Download
+            local_title = info.get('title', 'Unknown Title')
+            local_website = info.get('extractor_key', 'Unknown Website')
+            local_caption = (
+                f"**🎬 Title:** {local_title}\n"
+                f"**🌐 Website:** {local_website}\n"
+                f"**⚙️ Quality:** {selected_res}p\n"
+                f"**🔗 Source:** [Original Link]({url})"
+            )
+
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
-            
             start_time = time.time()
             
             try:
                 await app.send_video(
-                    chat_id=message.chat.id,
+                    chat_id=chat_id,
                     video=filename,
-                    caption=f"**Title:** {info.get('title', 'Unknown Title')}",
+                    caption=local_caption,
                     supports_streaming=True,
                     progress=progress_bar,
                     progress_args=(msg, start_time, "Uploading")
@@ -254,7 +289,7 @@ async def process_queue():
 # ==========================================
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Hello! Main v2.0 Premium Downloader hoon. Mujhe links bhejiye! (Queue, Resume, Progress & Smart Dual-Mode active)")
+    await message.reply_text("Hello! Main v2.0 Premium Downloader hoon. Mujhe links bhejiye! (Queue, Quality Selection, Resume & Smart Dual-Mode active)")
 
 @app.on_message(filters.command("queue"))
 async def show_queue(client, message):
@@ -273,10 +308,56 @@ async def handle_links(client, message):
     for url in urls:
         if not url.startswith("http"): continue
         
-        position = len(queue_display) + 1
-        msg = await message.reply_text(f"⏳ Line me lag gaya! (Position: {position})")
-        queue_display.append(url)
-        await download_queue.put((url, message, msg))
+        # NAYA: Pehle message bhej kar loading dikhayega, phir buttons banayega
+        msg = await message.reply_text(f"🔍 Fetching quality options... Please wait!")
+        URL_CACHE[msg.id] = url
+        
+        try:
+            res_list, website = await asyncio.to_thread(get_formats, url)
+            if not res_list:
+                res_list = [360, 480, 720, 1080] # Default Fallback agar fetch na ho paaye
+            
+            buttons = []
+            row = []
+            # 2 buttons per row ka design
+            for res in res_list:
+                row.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"res_{res}_{msg.id}"))
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row:
+                buttons.append(row) # Bacha hua 1 button
+            
+            buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")])
+            reply_markup = InlineKeyboardMarkup(buttons)
+            
+            await msg.edit_text(
+                f"**🔗 Link:** {url}\n**🌐 Source:** {website}\n\n👇 **Select Quality to Download:**", 
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            await msg.edit_text(f"❌ Error fetching qualities: {str(e)}")
+
+# NAYA: Quality Button dabaane par kya hoga
+@app.on_callback_query(filters.regex(r"^res_"))
+async def select_resolution(client, callback_query):
+    data = callback_query.data.split("_")
+    selected_res = int(data[1])
+    msg_id = int(data[2])
+    
+    url = URL_CACHE.get(msg_id)
+    if not url:
+        await callback_query.answer("Error: Link purana ho gaya hai, kripya wapas link bhejein.", show_alert=True)
+        return
+    
+    position = len(queue_display) + 1
+    queue_display.append(url)
+    
+    # Line me lagana (url, chat_id, msg, resolution)
+    await download_queue.put((url, callback_query.message.chat.id, callback_query.message, selected_res))
+    
+    await callback_query.message.edit_text(f"⏳ Line me lag gaya!\n(Position: {position} | Selected Quality: {selected_res}p)")
 
 @app.on_callback_query(filters.regex(r"^cancel_"))
 async def cancel_callback(client, callback_query):
@@ -284,6 +365,10 @@ async def cancel_callback(client, callback_query):
     CANCEL_TASKS[msg_id] = True
     STOP_UPLOAD[msg_id] = True 
     await callback_query.answer("Cancelling task... Please wait!", show_alert=True)
+    try:
+        await callback_query.message.edit_text("❌ Task Cancelled.")
+    except:
+        pass
 
 # ==========================================
 # 7. BOT RUNNER
@@ -291,7 +376,7 @@ async def cancel_callback(client, callback_query):
 if __name__ == "__main__":
     print("========================================")
     print("Bot is running v2.0 purely on Render Cloud!")
-    print("Features: Queue | Progress Bar | Resume | Cancel | Smart Dual-Mode | 1080p Video")
+    print("Features: Quality Buttons | Queue | Progress Bar | Captions | Smart Dual-Mode")
     print("========================================")
     
     loop = asyncio.get_event_loop()
