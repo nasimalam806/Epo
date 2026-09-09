@@ -1,4 +1,6 @@
 pyrogram
 tgcrypto
+yt-dlp
+yt-dlp[default,curl-cffi]
 flask
-git+https://github.com/yt-dlp/yt-dlp.git
+gunicorn
