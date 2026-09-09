@@ -3,5 +3,3 @@ tgcrypto
 yt-dlp[default,curl-cffi]
 flask
 gunicorn
-requests
-gallery-dl
