@@ -92,11 +92,10 @@ class MyLogger(object):
 
 def extract_info_only(url):
     ydl_opts = {
-        'format': 'best',
+        'format': 'best', # Isko 'best' hi rakhna zaroori hai taaki Direct Stream me ek single link mile
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
-        # NAYA BYPASS: iOS aur Android dono ko mix karke try karna
         'extractor_args': {
             'youtube': ['player_client=ios,android']
         },
@@ -112,7 +111,9 @@ def download_with_ytdlp(url, msg_id):
     
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
-        'format': 'best', 
+        # NAYA: Hamesha 1080p (ya usse best) video download karne ke liye
+        'format': 'bestvideo[height<=1080]+bestaudio/best',
+        'merge_output_format': 'mp4', # FFmpeg ko batana ki final file .mp4 me merge kare
         'fixup': 'never',
         'quiet': True,
         'noplaylist': True,
@@ -142,7 +143,6 @@ def download_with_ytdlp(url, msg_id):
     except CancelledError:
         return None, "CANCELLED"
     except Exception as e:
-        # NAYA: Ab koi error chupega nahi, seedha Telegram par dikhega!
         return None, f"YTDLP_ERROR: {str(e)}"
 
 # ==========================================
@@ -169,7 +169,6 @@ async def process_queue():
             try:
                 info_direct = await asyncio.to_thread(extract_info_only, url)
             except Exception as e:
-                # Agar checking mein error aaye toh direct link cancel, seedha local try karega
                 info_direct = None
             
             if CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
@@ -201,7 +200,6 @@ async def process_queue():
             if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id):
                 raise Exception("Cancelled by user")
                 
-            # NAYA: Asli error display logic
             if not info and filename and filename.startswith("YTDLP_ERROR:"):
                 raise Exception(filename.replace("YTDLP_ERROR: ", ""))
             if not filename:
@@ -234,7 +232,6 @@ async def process_queue():
                  await msg.edit_text("❌ Video Download/Upload Rok Diya Gaya Hai.")
                  subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
-                 # Real error yahan print hoga
                  await msg.edit_text(f"❌ Error: {str(e)}")
             
             try:
@@ -294,7 +291,7 @@ async def cancel_callback(client, callback_query):
 if __name__ == "__main__":
     print("========================================")
     print("Bot is running v2.0 purely on Render Cloud!")
-    print("Features: Queue | Progress Bar | Resume | Cancel | Smart Dual-Mode | Advanced YT Bypass")
+    print("Features: Queue | Progress Bar | Resume | Cancel | Smart Dual-Mode | 1080p Video")
     print("========================================")
     
     loop = asyncio.get_event_loop()
