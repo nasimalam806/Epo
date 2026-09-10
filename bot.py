@@ -8,7 +8,7 @@ import subprocess
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
-from pyrogram.errors import MessageNotModified
+from pyrogram.errors import MessageNotModified, FloodWait
 from yt_dlp.networking.impersonate import ImpersonateTarget
 
 # ==========================================
@@ -103,6 +103,9 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
             await msg.edit_text(text, reply_markup=reply_markup)
         except MessageNotModified:
             pass
+        except FloodWait as e:
+            # Prevent getting stuck due to flood limits while editing progress
+            await asyncio.sleep(e.value)
 
 # ==========================================
 # 4. YT-DLP CORE (RESOLUTION & BYPASS)
@@ -162,7 +165,6 @@ def extract_info_only(url, selected_res):
 def download_with_ytdlp(url, msg_id, selected_res):
     if CANCEL_TASKS.get(msg_id): return None, None
     
-    # 🔥 FIX: Added strictly robust timeouts so Bulk downloading doesn't freeze
     ydl_opts = {
         'socket_timeout': 15, 
         'retries': 3,
@@ -238,18 +240,26 @@ async def process_queue():
             if direct_url:
                 try:
                     await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
-                    await app.send_video(
-                        chat_id=chat_id,
-                        video=direct_url,
-                        caption=caption_text,
-                        supports_streaming=True
-                    )
+                    
+                    # 🔥 Upload logic with basic retry for direct URLs
+                    for _ in range(3):
+                        try:
+                            await app.send_video(
+                                chat_id=chat_id,
+                                video=direct_url,
+                                caption=caption_text,
+                                supports_streaming=True
+                            )
+                            break
+                        except FloodWait as e:
+                            await asyncio.sleep(e.value + 2)
+                        except Exception:
+                            await asyncio.sleep(5)
+                            
                     await msg.delete()
                     if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
                     if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
                     download_queue.task_done()
-                    
-                    # 🔥 FIX: 2.5 second cooldown so the server doesn't freeze the connection on bulk
                     await asyncio.sleep(2.5)
                     continue 
                 except Exception:
@@ -267,7 +277,6 @@ async def process_queue():
             if not filename:
                 raise Exception("Download failed due to an unknown issue.")
 
-            # Thumbnail Generator lagaya gaya
             thumb_path = f"thumb_{msg.id}.jpg"
             thumb = generate_thumbnail(filename, thumb_path)
 
@@ -283,23 +292,34 @@ async def process_queue():
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
             
-            try:
-                # Upload function me thumb add kiya gaya
-                await app.send_video(
-                    chat_id=chat_id,
-                    video=filename,
-                    thumb=thumb, 
-                    caption=local_caption,
-                    supports_streaming=True,
-                    progress=progress_bar,
-                    progress_args=(msg, start_time, "Uploading")
-                )
-                await msg.delete()
-            except Exception as e:
-                if "Upload Cancelled" in str(e):
-                    raise Exception("Cancelled by user during upload")
-                else:
-                    raise e 
+            # 🔥 FIX: Robust Upload Mechanism to prevent getting stuck
+            upload_success = False
+            for attempt in range(3):
+                if CANCEL_TASKS.get(msg.id) or STOP_UPLOAD.get(msg.id):
+                    raise Exception("Upload Cancelled")
+                try:
+                    await app.send_video(
+                        chat_id=chat_id,
+                        video=filename,
+                        thumb=thumb, 
+                        caption=local_caption,
+                        supports_streaming=True,
+                        progress=progress_bar,
+                        progress_args=(msg, start_time, "Uploading")
+                    )
+                    upload_success = True
+                    break
+                except FloodWait as e:
+                    await asyncio.sleep(e.value + 3) # Wait extra to be safe
+                except Exception as e:
+                    if "Upload Cancelled" in str(e):
+                         raise e
+                    await asyncio.sleep(5) # Delay before retry
+
+            if upload_success:
+                 await msg.delete()
+            else:
+                 await msg.edit_text("❌ Upload failed after multiple attempts.")
 
             # File cleanup
             if os.path.exists(filename): os.remove(filename)
@@ -329,7 +349,6 @@ async def process_queue():
         except ValueError:
              pass
              
-        # 🔥 FIX: 2.5 seconds gap before starting the next video in bulk queue
         await asyncio.sleep(2.5)
 
 # ==========================================
@@ -338,7 +357,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v2.5 Premium Downloader hoon.\n\n"
+        "Hello! Main v2.6 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -444,8 +463,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.5 purely on Render Cloud!")
-    print("Features: Bulk Anti-Freeze | Smart Thumbnail | Queue")
+    print("Bot is running v2.6 purely on Render Cloud!")
+    print("Features: Bulk Anti-Freeze | Smart Thumbnail | Robust Upload Retry")
     print("========================================")
     
     loop = asyncio.get_event_loop()
