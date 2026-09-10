@@ -27,7 +27,7 @@ download_queue = asyncio.Queue()
 queue_display = [] 
 CANCEL_TASKS = {}
 STOP_UPLOAD = {} 
-URL_CACHE = {} # NAYA: Button click ke liye link yaad rakhne ka system
+URL_CACHE = {} 
 
 def format_bytes(size):
     size = int(size)
@@ -91,7 +91,6 @@ class MyLogger(object):
     def warning(self, msg): pass
     def error(self, msg): pass
 
-# NAYA: Video ki available quality (resolutions) fetch karne ka function
 def get_formats(url):
     ydl_opts = {
         'quiet': True,
@@ -112,13 +111,13 @@ def get_formats(url):
         common_res = [144, 240, 360, 480, 720, 1080, 1440, 2160]
         available_res = sorted([r for r in resolutions if r in common_res])
         if not available_res:
-            available_res = sorted(list(resolutions)) # Fallback
+            available_res = sorted(list(resolutions)) 
             
         return available_res, info.get('extractor_key', 'Unknown Website')
 
 def extract_info_only(url, selected_res):
     ydl_opts = {
-        'format': f'best[height<={selected_res}]', # NAYA: Selected quality ka direct link lega
+        'format': f'best[height<={selected_res}]', 
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
@@ -133,7 +132,6 @@ def download_with_ytdlp(url, msg_id, selected_res):
     
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
-        # NAYA: User ne jo Quality select ki hai wo aayegi yahan
         'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
         'merge_output_format': 'mp4',
         'fixup': 'never',
@@ -169,7 +167,7 @@ def download_with_ytdlp(url, msg_id, selected_res):
 async def process_queue():
     while True:
         task = await download_queue.get()
-        url, chat_id, msg, selected_res = task  # NAYA: Unpacking me resolution aur chat_id bhi
+        url, chat_id, msg, selected_res = task  
         
         if url in queue_display:
             queue_display.remove(url) 
@@ -194,7 +192,6 @@ async def process_queue():
             title = info_direct.get('title', 'Unknown Title') if info_direct else 'Unknown Title'
             website = info_direct.get('extractor_key', 'Unknown Website') if info_direct else 'Unknown Website'
             
-            # NAYA: Pro-level Caption Design
             caption_text = (
                 f"**🎬 Title:** {title}\n"
                 f"**🌐 Website:** {website}\n"
@@ -231,7 +228,6 @@ async def process_queue():
             if not filename:
                 raise Exception("Download failed due to an unknown issue.")
 
-            # Caption for Local Download
             local_title = info.get('title', 'Unknown Title')
             local_website = info.get('extractor_key', 'Unknown Website')
             local_caption = (
@@ -289,7 +285,13 @@ async def process_queue():
 # ==========================================
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Hello! Main v2.0 Premium Downloader hoon. Mujhe links bhejiye! (Queue, Quality Selection, Resume & Smart Dual-Mode active)")
+    await message.reply_text(
+        "Hello! Main v2.1 Premium Downloader hoon.\n\n"
+        "**Usage:**\n"
+        "1. Send a link to choose quality.\n"
+        "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it.\n\n"
+        "Example:\n`1080\nhttp://link1.com\nhttp://link2.com`"
+    )
 
 @app.on_message(filters.command("queue"))
 async def show_queue(client, message):
@@ -304,29 +306,45 @@ async def show_queue(client, message):
 
 @app.on_message(filters.text & ~filters.command(["start", "queue"]))
 async def handle_links(client, message):
-    urls = message.text.split() 
-    for url in urls:
+    lines = message.text.split('\n')
+    
+    # 🔥 NAYA: Auto-Quality Detection
+    auto_quality = None
+    first_line = lines[0].strip()
+    if first_line.isdigit():
+        auto_quality = int(first_line)
+        lines = lines[1:] # Pehli line hata di kyunki wo quality thi
+
+    for url in lines:
+        url = url.strip()
         if not url.startswith("http"): continue
         
-        # NAYA: Pehle message bhej kar loading dikhayega, phir buttons banayega
+        # Agar user ne Bulk Quality daali hai, toh seedha Queue me bhej do
+        if auto_quality:
+            position = len(queue_display) + 1
+            queue_display.append(url)
+            msg = await message.reply_text(f"⏳ Auto-Queue: {url}\n(Position: {position} | Quality: {auto_quality}p)")
+            await download_queue.put((url, message.chat.id, msg, auto_quality))
+            continue
+            
+        # Normal Flow (Agar Quality nahi daali toh Button dikhao)
         msg = await message.reply_text(f"🔍 Fetching quality options... Please wait!")
         URL_CACHE[msg.id] = url
         
         try:
             res_list, website = await asyncio.to_thread(get_formats, url)
             if not res_list:
-                res_list = [360, 480, 720, 1080] # Default Fallback agar fetch na ho paaye
+                res_list = [360, 480, 720, 1080] 
             
             buttons = []
             row = []
-            # 2 buttons per row ka design
             for res in res_list:
                 row.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"res_{res}_{msg.id}"))
                 if len(row) == 2:
                     buttons.append(row)
                     row = []
             if row:
-                buttons.append(row) # Bacha hua 1 button
+                buttons.append(row) 
             
             buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")])
             reply_markup = InlineKeyboardMarkup(buttons)
@@ -339,7 +357,6 @@ async def handle_links(client, message):
         except Exception as e:
             await msg.edit_text(f"❌ Error fetching qualities: {str(e)}")
 
-# NAYA: Quality Button dabaane par kya hoga
 @app.on_callback_query(filters.regex(r"^res_"))
 async def select_resolution(client, callback_query):
     data = callback_query.data.split("_")
@@ -354,7 +371,6 @@ async def select_resolution(client, callback_query):
     position = len(queue_display) + 1
     queue_display.append(url)
     
-    # Line me lagana (url, chat_id, msg, resolution)
     await download_queue.put((url, callback_query.message.chat.id, callback_query.message, selected_res))
     
     await callback_query.message.edit_text(f"⏳ Line me lag gaya!\n(Position: {position} | Selected Quality: {selected_res}p)")
@@ -375,8 +391,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.0 purely on Render Cloud!")
-    print("Features: Quality Buttons | Queue | Progress Bar | Captions | Smart Dual-Mode")
+    print("Bot is running v2.1 purely on Render Cloud!")
+    print("Features: Bulk Auto-Quality | Queue | Smart Dual-Mode")
     print("========================================")
     
     loop = asyncio.get_event_loop()
