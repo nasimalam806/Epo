@@ -5,7 +5,6 @@ import os
 import time
 import math
 import subprocess
-import requests
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
@@ -13,25 +12,22 @@ from pyrogram.errors import MessageNotModified
 from yt_dlp.networking.impersonate import ImpersonateTarget
 
 # ==========================================
-# 1. BOT CREDENTIALS & PROXY
+# 1. BOT CREDENTIALS
 # ==========================================
 API_ID = int(os.environ.get("API_ID", 0))        
 API_HASH = os.environ.get("API_HASH", "")    
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")  
 
-# 🔥 NAYA: Yahan aap apni Proxy daalenge (Jab expire ho jaye toh bas ise badal dena)
-PROXY = "socks4://207.180.205.36"
-
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ==========================================
-# 2. QUEUE, CANCEL MANAGER & CACHE
+# 2. QUEUE, CANCEL MANAGER & URL CACHE
 # ==========================================
 download_queue = asyncio.Queue()
 queue_display = [] 
 CANCEL_TASKS = {}
 STOP_UPLOAD = {} 
-URL_CACHE = {} 
+URL_CACHE = {} # NAYA: Button click ke liye link yaad rakhne ka system
 
 def format_bytes(size):
     size = int(size)
@@ -45,7 +41,7 @@ def format_bytes(size):
     return f"{round(size, 2)} {dic_powerN[n]}"
 
 # ==========================================
-# 3. LIVE PROGRESS BAR ENGINE
+# 3. LIVE PROGRESS BAR ENGINE (WITH CANCEL)
 # ==========================================
 async def progress_bar(current, total, msg, start_time, action="Uploading"):
     if STOP_UPLOAD.get(msg.id):
@@ -81,7 +77,7 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
             pass
 
 # ==========================================
-# 4. DOWNLOAD ENGINES (FORCE FFMPEG + YTDLP)
+# 4. YT-DLP CORE (RESOLUTION & BYPASS)
 # ==========================================
 class CancelledError(Exception):
     pass
@@ -90,114 +86,82 @@ class MyLogger(object):
     def __init__(self, msg_id):
         self.msg_id = msg_id
     def debug(self, msg):
-        if CANCEL_TASKS.get(self.msg_id): raise CancelledError("Download cancelled")
+        if CANCEL_TASKS.get(self.msg_id):
+             raise CancelledError("Download cancelled")
     def warning(self, msg): pass
     def error(self, msg): pass
 
-# 🔥 NAYA ENGINE: DIRECT FORCE DOWNLOADER (WITH SOCKS5 PROXY)
-def download_direct_force(url, msg_id, referer=None):
-    if CANCEL_TASKS.get(msg_id): return None, "CANCELLED"
-    filename = f"force_{msg_id}.mp4"
-    try:
-        cmd = ["ffmpeg", "-y"]
-        user_agent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
-        
-        if referer:
-            cmd.extend(["-headers", f"Referer: {referer}\r\n"])
-            
-        cmd.extend(["-user_agent", user_agent])
-        cmd.extend(["-i", url, "-c", "copy"])
-        
-        if ".m3u8" in url:
-            cmd.extend(["-bsf:a", "aac_adtstoasc"])
-            
-        cmd.append(filename)
-        
-        # PROXY ENVIRONMENT SETUP FOR FFMPEG
-        env = os.environ.copy()
-        if PROXY:
-            env["http_proxy"] = PROXY
-            env["https_proxy"] = PROXY
-            env["all_proxy"] = PROXY
-        
-        process = subprocess.run(cmd, capture_output=True, text=True, env=env)
-            
-        if os.path.exists(filename) and os.path.getsize(filename) > 1024:
-            return {"title": "FFmpeg (Proxied)", "extractor_key": "Proxy Master"}, filename
-        else:
-            error_msg = process.stderr[-300:] if process.stderr else "Unknown FFmpeg Error (or file too small)"
-            return None, f"FORCE_ERROR: {error_msg}"
-            
-    except Exception as e:
-        return None, f"FORCE_ERROR: System Error - {str(e)}"
-
-def get_formats(url, referer=None):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    if referer: headers['Referer'] = referer
+# NAYA: Video ki available quality (resolutions) fetch karne ka function
+def get_formats(url):
     ydl_opts = {
-        'quiet': True, 'noplaylist': True,
-        'proxy': PROXY, # PROXY ATTACHED
+        'quiet': True,
+        'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
-        'http_headers': headers
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            formats = info.get('formats', [])
-            resolutions = set()
-            for f in formats:
-                h = f.get('height')
-                if h and isinstance(h, int) and h >= 144: resolutions.add(h)
-            common_res = [144, 240, 360, 480, 720, 1080, 1440, 2160]
-            available_res = sorted([r for r in resolutions if r in common_res])
-            if not available_res: available_res = sorted(list(resolutions))
-            return available_res, info.get('extractor_key', 'Direct Video')
-    except:
-        return [360, 480, 720, 1080], "Fallback Engine"
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        formats = info.get('formats', [])
+        resolutions = set()
+        for f in formats:
+            h = f.get('height')
+            if h and isinstance(h, int) and h >= 144:
+                resolutions.add(h)
+        
+        common_res = [144, 240, 360, 480, 720, 1080, 1440, 2160]
+        available_res = sorted([r for r in resolutions if r in common_res])
+        if not available_res:
+            available_res = sorted(list(resolutions)) # Fallback
+            
+        return available_res, info.get('extractor_key', 'Unknown Website')
 
-def extract_info_only(url, selected_res, referer=None):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    if referer: headers['Referer'] = referer
+def extract_info_only(url, selected_res):
     ydl_opts = {
-        'format': f'best[height<={selected_res}]',
-        'quiet': True, 'noplaylist': True,
-        'proxy': PROXY, # PROXY ATTACHED
+        'format': f'best[height<={selected_res}]', # NAYA: Selected quality ka direct link lega
+        'quiet': True,
+        'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
-        'http_headers': headers
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
 
-def download_with_ytdlp(url, msg_id, selected_res, referer=None):
+def download_with_ytdlp(url, msg_id, selected_res):
     if CANCEL_TASKS.get(msg_id): return None, None
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    if referer: headers['Referer'] = referer
+    
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
+        # NAYA: User ne jo Quality select ki hai wo aayegi yahan
         'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
         'merge_output_format': 'mp4',
-        'fixup': 'never', 'quiet': True, 'noplaylist': True,
-        'proxy': PROXY, # PROXY ATTACHED
+        'fixup': 'never',
+        'quiet': True,
+        'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
         'external_downloader': 'aria2c',
-        'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M', f'--all-proxy={PROXY}' if PROXY else ''],
-        'http_headers': headers,
+        'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M'],
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'},
         'logger': MyLogger(msg_id) 
     }
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
+            
             if not filename.endswith('.mp4') and os.path.exists(filename):
                 new_filename = filename.rsplit('.', 1)[0] + '.mp4'
                 os.rename(filename, new_filename)
                 filename = new_filename
+                
             return info, filename
-    except CancelledError: return None, "CANCELLED"
-    except Exception as e: return None, f"YTDLP_ERROR: {str(e)}"
+    except CancelledError:
+        return None, "CANCELLED"
+    except Exception as e:
+        return None, f"YTDLP_ERROR: {str(e)}"
 
 # ==========================================
 # 5. BACKGROUND WORKER (QUEUE SYSTEM)
@@ -205,9 +169,11 @@ def download_with_ytdlp(url, msg_id, selected_res, referer=None):
 async def process_queue():
     while True:
         task = await download_queue.get()
-        url, chat_id, msg, selected_res, referer = task  
+        url, chat_id, msg, selected_res = task  # NAYA: Unpacking me resolution aur chat_id bhi
         
-        if url in queue_display: queue_display.remove(url) 
+        if url in queue_display:
+            queue_display.remove(url) 
+        
         if CANCEL_TASKS.get(msg.id):
             await msg.edit_text("❌ Task Cancelled before starting.")
             download_queue.task_done()
@@ -215,139 +181,183 @@ async def process_queue():
 
         try:
             cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")]])
+            await msg.edit_text("🔍 Checking Direct Link...", reply_markup=cancel_markup)
             
-            # 🔥 BYPASS: Agar direct file hai ya Referer diya hai toh FFmpeg chalega
-            if referer or url.endswith(".mp4") or url.endswith(".m3u8"):
-                await msg.edit_text(f"⚡ Forced FFmpeg Download Active...\n🛡️ Referer: {'Yes' if referer else 'No'}\n🌍 Proxy: {'NL (Active)' if PROXY else 'Off'}", reply_markup=cancel_markup)
-                info, filename = await asyncio.to_thread(download_direct_force, url, msg.id, referer)
-                if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
-                
-                if not filename or filename.startswith("FORCE_ERROR"):
-                    real_error = filename.replace("FORCE_ERROR: ", "").strip() if filename else "Unknown Error"
-                    raise Exception(f"FFmpeg Failed!\n\n**Asli Wajah:**\n`{real_error}`")
-            else:
-                # NORMAL FLOW (yt-dlp)
-                await msg.edit_text(f"⚡ Downloading locally (yt-dlp)...\n🌍 Proxy: {'Active' if PROXY else 'Off'}", reply_markup=cancel_markup)
-                info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id, selected_res, referer)
-                if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
-                
-                if not info and filename and filename.startswith("YTDLP_ERROR:"):
-                    raise Exception(f"yt-dlp Error: {filename}")
+            try:
+                info_direct = await asyncio.to_thread(extract_info_only, url, selected_res)
+            except Exception as e:
+                info_direct = None
+            
+            if CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
 
-            local_title = info.get('title', 'Unknown Title') if info else 'Unknown Title'
-            local_website = info.get('extractor_key', 'FFmpeg Extractor') if info else 'FFmpeg Extractor'
-            local_caption = f"**🎬 Title:** {local_title}\n**🌐 Website:** {local_website}\n**⚙️ Quality:** {selected_res}p\n**🔗 Source:** [Link]({referer if referer else url})"
+            direct_url = info_direct.get('url') if info_direct else None
+            title = info_direct.get('title', 'Unknown Title') if info_direct else 'Unknown Title'
+            website = info_direct.get('extractor_key', 'Unknown Website') if info_direct else 'Unknown Website'
+            
+            # NAYA: Pro-level Caption Design
+            caption_text = (
+                f"**🎬 Title:** {title}\n"
+                f"**🌐 Website:** {website}\n"
+                f"**⚙️ Quality:** {selected_res}p\n"
+                f"**🔗 Source:** [Original Link]({url})"
+            )
+            
+            if direct_url:
+                try:
+                    await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
+                    await app.send_video(
+                        chat_id=chat_id,
+                        video=direct_url,
+                        caption=caption_text,
+                        supports_streaming=True
+                    )
+                    await msg.delete()
+                    if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
+                    if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
+                    download_queue.task_done()
+                    continue 
+                except Exception:
+                    pass 
+
+            await msg.edit_text(f"⚡ Downloading locally...\nQuality: {selected_res}p", reply_markup=cancel_markup)
+            
+            info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id, selected_res)
+            
+            if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id):
+                raise Exception("Cancelled by user")
+                
+            if not info and filename and filename.startswith("YTDLP_ERROR:"):
+                raise Exception(filename.replace("YTDLP_ERROR: ", ""))
+            if not filename:
+                raise Exception("Download failed due to an unknown issue.")
+
+            # Caption for Local Download
+            local_title = info.get('title', 'Unknown Title')
+            local_website = info.get('extractor_key', 'Unknown Website')
+            local_caption = (
+                f"**🎬 Title:** {local_title}\n"
+                f"**🌐 Website:** {local_website}\n"
+                f"**⚙️ Quality:** {selected_res}p\n"
+                f"**🔗 Source:** [Original Link]({url})"
+            )
 
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
             
             try:
                 await app.send_video(
-                    chat_id=chat_id, video=filename, caption=local_caption,
-                    supports_streaming=True, progress=progress_bar, progress_args=(msg, start_time, "Uploading")
+                    chat_id=chat_id,
+                    video=filename,
+                    caption=local_caption,
+                    supports_streaming=True,
+                    progress=progress_bar,
+                    progress_args=(msg, start_time, "Uploading")
                 )
                 await msg.delete()
             except Exception as e:
-                if "Upload Cancelled" in str(e): raise Exception("Cancelled by user")
-                else: raise e 
+                if "Upload Cancelled" in str(e):
+                    raise Exception("Cancelled by user during upload")
+                else:
+                    raise e 
+
             if os.path.exists(filename): os.remove(filename)
 
         except Exception as e:
             if "Cancelled" in str(e):
                  await msg.edit_text("❌ Video Download/Upload Rok Diya Gaya Hai.")
                  subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                 subprocess.run(["pkill", "-f", "ffmpeg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
                  await msg.edit_text(f"❌ Error: {str(e)}")
+            
             try:
-                if 'filename' in locals() and os.path.exists(filename) and not "ERROR" in filename: os.remove(filename)
+                if 'filename' in locals() and os.path.exists(filename) and not filename.startswith("YTDLP_ERROR:"):
+                    os.remove(filename)
             except: pass
+            
         finally:
             if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
             if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
-            try: download_queue.task_done()
-            except: pass
+            pass
+
+        try:
+             download_queue.task_done()
+        except ValueError:
+             pass
 
 # ==========================================
 # 6. TELEGRAM COMMANDS & HANDLERS
 # ==========================================
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Hello! Main v4.3 Premium Downloader hoon.\n(Naya Feature: SOCKS5 Proxy Integrated 🌍)")
+    await message.reply_text("Hello! Main v2.0 Premium Downloader hoon. Mujhe links bhejiye! (Queue, Quality Selection, Resume & Smart Dual-Mode active)")
 
 @app.on_message(filters.command("queue"))
 async def show_queue(client, message):
     if not queue_display:
         await message.reply_text("📭 Queue bilkul khaali hai! Koi naya link bhejein.")
         return
+    
     text = "**📋 Line me lagi hui videos:**\n\n"
-    for i, url in enumerate(queue_display): text += f"{i+1}. {url}\n"
+    for i, url in enumerate(queue_display):
+        text += f"{i+1}. {url}\n"
     await message.reply_text(text)
 
 @app.on_message(filters.text & ~filters.command(["start", "queue"]))
 async def handle_links(client, message):
-    lines = message.text.split('\n') 
-    for line in lines:
-        if not line.startswith("http"): continue
+    urls = message.text.split() 
+    for url in urls:
+        if not url.startswith("http"): continue
         
-        parts = line.split('|')
-        url = parts[0].strip()
-        referer = parts[1].strip() if len(parts) > 1 else None
-
-        # 🔥 SUPER HACK
-        if referer or url.endswith(".mp4") or url.endswith(".m3u8"):
-            position = len(queue_display) + 1
-            queue_display.append(url)
-            msg = await message.reply_text(f"⚡ FFmpeg Proxy Triggered! Skipping checks... Line me lag gaya!\n(Position: {position})")
-            await download_queue.put((url, message.chat.id, msg, 1080, referer))
-            continue
-
-        msg = await message.reply_text(f"🔍 Fetching quality options using Proxy... Please wait!")
-        URL_CACHE[msg.id] = {'url': url, 'referer': referer} 
+        # NAYA: Pehle message bhej kar loading dikhayega, phir buttons banayega
+        msg = await message.reply_text(f"🔍 Fetching quality options... Please wait!")
+        URL_CACHE[msg.id] = url
         
         try:
-            res_list, website = await asyncio.to_thread(get_formats, url, referer)
-            if not res_list: res_list = [360, 480, 720, 1080] 
+            res_list, website = await asyncio.to_thread(get_formats, url)
+            if not res_list:
+                res_list = [360, 480, 720, 1080] # Default Fallback agar fetch na ho paaye
             
             buttons = []
             row = []
+            # 2 buttons per row ka design
             for res in res_list:
                 row.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"res_{res}_{msg.id}"))
                 if len(row) == 2:
                     buttons.append(row)
                     row = []
-            if row: buttons.append(row)
+            if row:
+                buttons.append(row) # Bacha hua 1 button
             
             buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")])
             reply_markup = InlineKeyboardMarkup(buttons)
             
-            text_msg = f"**🔗 Link:** {url}\n**🌐 Source:** {website}"
-            if referer: text_msg += f"\n🛡️ **Referer Bypass:** {referer}"
-            text_msg += "\n\n👇 **Select Quality to Download:**"
-            
-            await msg.edit_text(text_msg, reply_markup=reply_markup, disable_web_page_preview=True)
+            await msg.edit_text(
+                f"**🔗 Link:** {url}\n**🌐 Source:** {website}\n\n👇 **Select Quality to Download:**", 
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
         except Exception as e:
             await msg.edit_text(f"❌ Error fetching qualities: {str(e)}")
 
+# NAYA: Quality Button dabaane par kya hoga
 @app.on_callback_query(filters.regex(r"^res_"))
 async def select_resolution(client, callback_query):
     data = callback_query.data.split("_")
     selected_res = int(data[1])
     msg_id = int(data[2])
     
-    cache_data = URL_CACHE.get(msg_id)
-    if not cache_data:
-         await callback_query.answer("Error: Link purana ho gaya hai, wapas link bhejein.", show_alert=True)
-         return
-    
-    url = cache_data['url']
-    referer = cache_data['referer']
+    url = URL_CACHE.get(msg_id)
+    if not url:
+        await callback_query.answer("Error: Link purana ho gaya hai, kripya wapas link bhejein.", show_alert=True)
+        return
     
     position = len(queue_display) + 1
     queue_display.append(url)
     
-    await download_queue.put((url, callback_query.message.chat.id, callback_query.message, selected_res, referer))
-    await callback_query.message.edit_text(f"⏳ Line me lag gaya!\n(Position: {position} | Quality: {selected_res}p)")
+    # Line me lagana (url, chat_id, msg, resolution)
+    await download_queue.put((url, callback_query.message.chat.id, callback_query.message, selected_res))
+    
+    await callback_query.message.edit_text(f"⏳ Line me lag gaya!\n(Position: {position} | Selected Quality: {selected_res}p)")
 
 @app.on_callback_query(filters.regex(r"^cancel_"))
 async def cancel_callback(client, callback_query):
@@ -355,16 +365,18 @@ async def cancel_callback(client, callback_query):
     CANCEL_TASKS[msg_id] = True
     STOP_UPLOAD[msg_id] = True 
     await callback_query.answer("Cancelling task... Please wait!", show_alert=True)
-    try: await callback_query.message.edit_text("❌ Task Cancelled.")
-    except: pass
+    try:
+        await callback_query.message.edit_text("❌ Task Cancelled.")
+    except:
+        pass
 
 # ==========================================
 # 7. BOT RUNNER
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v4.3 purely on Render Cloud!")
-    print("Features: Master FFmpeg Engine | Anti-Hotlink | SOCKS5 PROXY")
+    print("Bot is running v2.0 purely on Render Cloud!")
+    print("Features: Quality Buttons | Queue | Progress Bar | Captions | Smart Dual-Mode")
     print("========================================")
     
     loop = asyncio.get_event_loop()
