@@ -28,6 +28,7 @@ queue_display = []
 CANCEL_TASKS = {}
 STOP_UPLOAD = {} 
 URL_CACHE = {} 
+GLOBAL_CANCEL = False # 🔥 NAYA: Pura current task udayane ke liye global switch
 
 def format_bytes(size):
     size = int(size)
@@ -69,12 +70,13 @@ def generate_thumbnail(video_path, thumbnail_path):
 # 3. LIVE PROGRESS BAR ENGINE (WITH CANCEL)
 # ==========================================
 async def progress_bar(current, total, msg, start_time, action="Uploading"):
-    # 🔥 FIX: Agar msg object None hai ya msg channel ka hai (chat_id < 0 ke case humne logic me sambhale hai aage), toh kuch edit nahi hoga
-    if msg is None:
-        return
-        
-    if STOP_UPLOAD.get(msg.id):
+    global GLOBAL_CANCEL
+    if GLOBAL_CANCEL or STOP_UPLOAD.get(msg.id):
         raise Exception("Upload Cancelled")
+        
+    # 🔥 FIX: Agar msg channel ka hai, toh progress edit nahi karega
+    if msg.chat.id < 0:
+        return
 
     now = time.time()
     diff = now - start_time
@@ -117,7 +119,8 @@ class MyLogger(object):
     def __init__(self, msg_id):
         self.msg_id = msg_id
     def debug(self, msg):
-        if self.msg_id and CANCEL_TASKS.get(self.msg_id):
+        global GLOBAL_CANCEL
+        if GLOBAL_CANCEL or (self.msg_id and CANCEL_TASKS.get(self.msg_id)):
              raise CancelledError("Download cancelled")
     def warning(self, msg): pass
     def error(self, msg): pass
@@ -163,17 +166,19 @@ def extract_info_only(url, selected_res):
         return ydl.extract_info(url, download=False)
 
 def download_with_ytdlp(url, msg, selected_res, loop):
+    global GLOBAL_CANCEL
     msg_id = msg.id if msg else None
-    if msg_id and CANCEL_TASKS.get(msg_id): return None, None
+    if GLOBAL_CANCEL or (msg_id and CANCEL_TASKS.get(msg_id)): return None, None
     
     last_edit_time = [0]
     
     def progress_hook(d):
-        if msg_id and CANCEL_TASKS.get(msg_id):
+        global GLOBAL_CANCEL
+        if GLOBAL_CANCEL or (msg_id and CANCEL_TASKS.get(msg_id)):
             raise CancelledError("Download Cancelled")
             
-        # 🔥 FIX: Agar channel ki vajah se msg None hai, toh progress loop me nahi jayega
-        if msg is None:
+        # 🔥 FIX: Agar msg channel ka hai, toh progress edit nahi karega
+        if msg.chat.id < 0:
             return
 
         if d['status'] == 'downloading':
@@ -255,45 +260,46 @@ def download_with_ytdlp(url, msg, selected_res, loop):
 # 5. BACKGROUND WORKER (QUEUE SYSTEM)
 # ==========================================
 async def process_queue():
+    global GLOBAL_CANCEL
     while True:
         task = await download_queue.get()
         url, chat_id, msg, selected_res = task  
         
+        # Reset Global Cancel for the new task
+        GLOBAL_CANCEL = False
+        
         if url in queue_display:
             queue_display.remove(url) 
 
-        # 🔥 NAYA: Agar chat_id < 0 hai (Channel), toh 'msg' ko jaanboojh kar None kar denge
-        is_channel = chat_id < 0
-        
-        if msg is None and not is_channel:
-            # Private chat mein message chahiye update ke liye
+        # 🔥 FIX: Ab channel me bhi message banega, taaki stuck hone ka issue na ho. 
+        # Lekin hum progress bar usme edit nahi karenge.
+        if msg is None:
             try:
-                msg = await app.send_message(chat_id, "⏳ Starting download process...")
+                msg = await app.send_message(chat_id, "⏳ Processing...")
                 URL_CACHE[msg.id] = url
             except Exception:
                 download_queue.task_done()
                 continue
-        elif is_channel:
-            # Channel me silent rahega
-            msg = None
         
-        if msg and CANCEL_TASKS.get(msg.id):
-            await msg.edit_text("❌ Task Cancelled before starting.")
+        if CANCEL_TASKS.get(msg.id) or GLOBAL_CANCEL:
+            try: await msg.edit_text("❌ Task Cancelled before starting.")
+            except: pass
             download_queue.task_done()
             continue
 
         try:
             cancel_markup = None
-            if msg:
+            if msg.chat.id > 0: # Only private chat gets the cancel button directly
                 cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")]])
-                await msg.edit_text("🔍 Checking Direct Link...", reply_markup=cancel_markup)
+            
+            await msg.edit_text("🔍 Checking Direct Link...", reply_markup=cancel_markup)
             
             try:
                 info_direct = await asyncio.to_thread(extract_info_only, url, selected_res)
             except Exception as e:
                 info_direct = None
             
-            if msg and CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
+            if CANCEL_TASKS.get(msg.id) or GLOBAL_CANCEL: raise Exception("Cancelled by user")
 
             direct_url = info_direct.get('url') if info_direct else None
             title = info_direct.get('title', 'Unknown Title') if info_direct else 'Unknown Title'
@@ -309,9 +315,10 @@ async def process_queue():
             if direct_url:
                 direct_success = False
                 try:
-                    if msg: await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
+                    await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
                     
                     for _ in range(2):
+                        if GLOBAL_CANCEL: raise Exception("Global Cancel triggered")
                         try:
                             await asyncio.wait_for(
                                 app.send_video(
@@ -335,20 +342,20 @@ async def process_queue():
                     pass 
 
                 if direct_success:
-                    if msg:
-                        await msg.delete()
-                        if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
-                        if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
+                    await msg.delete()
+                    if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
+                    if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
                     download_queue.task_done()
                     await asyncio.sleep(2.5)
                     continue 
 
-            if msg: await msg.edit_text(f"⚡ Downloading locally...\nQuality: {selected_res}p", reply_markup=cancel_markup)
+            # Local Download Start Message
+            await msg.edit_text(f"⚡ Downloading locally...\nQuality: {selected_res}p", reply_markup=cancel_markup)
             
             current_loop = asyncio.get_running_loop()
             info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg, selected_res, current_loop)
             
-            if msg and (filename == "CANCELLED" or CANCEL_TASKS.get(msg.id)):
+            if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id) or GLOBAL_CANCEL:
                 raise Exception("Cancelled by user")
                 
             if not info and filename and filename.startswith("YTDLP_ERROR:"):
@@ -356,7 +363,7 @@ async def process_queue():
             if not filename:
                 raise Exception("Download failed due to an unknown issue.")
 
-            thumb_path = f"thumb_{msg.id if msg else 'channel'}.jpg"
+            thumb_path = f"thumb_{msg.id}.jpg"
             thumb = generate_thumbnail(filename, thumb_path)
 
             local_title = info.get('title', 'Unknown Title')
@@ -368,19 +375,15 @@ async def process_queue():
                 f"**🔗 Source:** [Original Link]({url})"
             )
 
-            if msg: await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
+            # Upload Start Message
+            await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
             
             upload_success = False
             for attempt in range(3):
-                if msg and (CANCEL_TASKS.get(msg.id) or STOP_UPLOAD.get(msg.id)):
+                if CANCEL_TASKS.get(msg.id) or STOP_UPLOAD.get(msg.id) or GLOBAL_CANCEL:
                     raise Exception("Upload Cancelled")
                 try:
-                    
-                    # 🔥 Agar Msg None hai (Channel) toh progress bar None bhejo
-                    upload_progress_func = progress_bar if msg else None
-                    upload_args = (msg, start_time, "Uploading") if msg else ()
-                    
                     await asyncio.wait_for(
                         app.send_video(
                             chat_id=chat_id,
@@ -388,8 +391,8 @@ async def process_queue():
                             thumb=thumb, 
                             caption=local_caption,
                             supports_streaming=True,
-                            progress=upload_progress_func,
-                            progress_args=upload_args
+                            progress=progress_bar,
+                            progress_args=(msg, start_time, "Uploading")
                         ),
                         timeout=900 
                     )
@@ -405,19 +408,21 @@ async def process_queue():
                     await asyncio.sleep(5)
 
             if upload_success:
-                 if msg: await msg.delete()
+                 await msg.delete()
             else:
-                 if msg: await msg.edit_text("❌ Upload failed after multiple attempts (Telegram Timeout).")
+                 await msg.edit_text("❌ Upload failed after multiple attempts (Telegram Timeout).")
 
             if os.path.exists(filename): os.remove(filename)
             if thumb and os.path.exists(thumb): os.remove(thumb)
 
         except Exception as e:
-            if "Cancelled" in str(e):
-                 if msg: await msg.edit_text("❌ Video Download/Upload Rok Diya Gaya Hai.")
+            if "Cancelled" in str(e) or GLOBAL_CANCEL:
+                 try: await msg.edit_text("❌ Video Download/Upload Rok Diya Gaya Hai.")
+                 except: pass
                  subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
-                 if msg: await msg.edit_text(f"❌ Error: {str(e)}")
+                 try: await msg.edit_text(f"❌ Error: {str(e)}")
+                 except: pass
             
             try:
                 if 'filename' in locals() and os.path.exists(filename) and not filename.startswith("YTDLP_ERROR:"):
@@ -427,9 +432,8 @@ async def process_queue():
             except: pass
             
         finally:
-            if msg:
-                if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
-                if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
+            if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
+            if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
             pass
 
         try:
@@ -445,7 +449,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v3.1 Premium Downloader hoon.\n\n"
+        "Hello! Main v3.2 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -462,12 +466,17 @@ async def show_queue(client, message):
         text += f"{i+1}. {url}\n"
     await message.reply_text(text)
 
+# 🔥 FIX: /cancelall ab poori tarah se current video ko bhi destroy kar dega
 @app.on_message(filters.command("cancelall"))
 async def cancel_all(client, message):
-    global queue_display
+    global queue_display, GLOBAL_CANCEL
+    
+    # Trigger global stop
+    GLOBAL_CANCEL = True
     
     queue_display.clear()
     
+    # Clear background queue
     while not download_queue.empty():
         try:
             download_queue.get_nowait()
@@ -475,14 +484,20 @@ async def cancel_all(client, message):
         except:
             pass
             
+    # Forcibly kill any running download processes
     subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "ffmpeg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
+    # Cancel all active tasks
     for msg_id in list(URL_CACHE.keys()) + list(CANCEL_TASKS.keys()) + list(STOP_UPLOAD.keys()):
         CANCEL_TASKS[msg_id] = True
         STOP_UPLOAD[msg_id] = True
         
-    await message.reply_text("🗑️ **BAM!** Pura queue wipe out kar diya gaya hai! Saare atke hue downloads force-stop ho chuke hain. Bot ab ekdum free hai! ✅")
+    await message.reply_text("🗑️ **BAM!** Pura queue aur current download WIPE OUT kar diya gaya hai! Bot ab ekdum free hai! ✅")
+    
+    # Reset global cancel after a slight delay
+    await asyncio.sleep(2)
+    GLOBAL_CANCEL = False
 
 @app.on_message(filters.text & ~filters.command(["start", "queue", "cancelall"]))
 async def handle_links(client, message):
@@ -501,14 +516,11 @@ async def handle_links(client, message):
             
         for url in valid_urls:
             queue_display.append(url)
-            # Yahan msg ki jagah None bhejenge taaki processing ke waqt hi decide ho ki channel hai ya PM
             await download_queue.put((url, message.chat.id, None, auto_quality))
         
-        # Channel ko bas ek confirmation message jayega (Agar private message nahi hai)
         if message.chat.id < 0:
              await message.reply_text(f"✅ **Bulk Queue Active:** {len(valid_urls)} links added silently in background ({auto_quality}p).")
         else:
-             # Private chat ke liye
              await message.reply_text(f"✅ **Bulk Queue Active:** {len(valid_urls)} links added. Processing will show progress.")
         return
 
@@ -580,8 +592,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v3.1 purely on Render Cloud!")
-    print("Features: Silent Bulk Channel | Active Progress PM | CancelAll")
+    print("Bot is running v3.2 purely on Render Cloud!")
+    print("Features: Ultimate Global Cancel | Smart Channel Sync")
     print("========================================")
     
     loop = asyncio.get_event_loop()
