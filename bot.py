@@ -491,12 +491,13 @@ async def cancel_callback(client, callback_query):
     except: pass
 
 # ==========================================
+# ==========================================
 # 7. BOT RUNNER
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v4.2 purely on Render Cloud!")
-    print("Features: Master FFmpeg Engine | Anti-Hotlink | Error Tracker")
+    print("Bot is running v4.3 purely on Render Cloud!")
+    print("Features: Master FFmpeg Engine | Anti-Hotlink | SOCKS5 PROXY")
     print("========================================")
     
     loop = asyncio.get_event_loop()
