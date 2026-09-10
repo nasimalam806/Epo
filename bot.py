@@ -104,7 +104,6 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
         except MessageNotModified:
             pass
         except FloodWait as e:
-            # Prevent getting stuck due to flood limits while editing progress
             await asyncio.sleep(e.value)
 
 # ==========================================
@@ -238,11 +237,12 @@ async def process_queue():
             )
             
             if direct_url:
+                direct_success = False
                 try:
                     await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
                     
-                    # 🔥 FIX: Timeout for direct uploads
-                    for _ in range(3):
+                    # 🔥 FIX: Direct upload logic (Agar fail hua toh skip nahi karega, local download pe jayega)
+                    for _ in range(2):
                         try:
                             await asyncio.wait_for(
                                 app.send_video(
@@ -251,24 +251,28 @@ async def process_queue():
                                     caption=caption_text,
                                     supports_streaming=True
                                 ),
-                                timeout=600 # 10 minutes timeout
+                                timeout=60 # 60 seconds direct upload timeout
                             )
+                            direct_success = True
                             break
                         except asyncio.TimeoutError:
-                            pass # Retry loop will trigger
+                            pass
                         except FloodWait as e:
                             await asyncio.sleep(e.value + 2)
                         except Exception:
-                            await asyncio.sleep(5)
+                            await asyncio.sleep(2)
                             
+                except Exception:
+                    pass 
+
+                if direct_success:
                     await msg.delete()
                     if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
                     if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
                     download_queue.task_done()
                     await asyncio.sleep(2.5)
                     continue 
-                except Exception:
-                    pass 
+                # Agar direct_success False raha, toh ye block automatically neeche chala jayega Local Download ke liye
 
             await msg.edit_text(f"⚡ Downloading locally...\nQuality: {selected_res}p", reply_markup=cancel_markup)
             
@@ -297,7 +301,7 @@ async def process_queue():
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
             
-            # 🔥 FIX: Anti-Freeze Upload Mechanism (Timeout Error ko automatically theek karega)
+            # 🔥 FIX: Timeout and Retry to prevent stuck uploads
             upload_success = False
             for attempt in range(3):
                 if CANCEL_TASKS.get(msg.id) or STOP_UPLOAD.get(msg.id):
@@ -313,12 +317,11 @@ async def process_queue():
                             progress=progress_bar,
                             progress_args=(msg, start_time, "Uploading")
                         ),
-                        timeout=900 # Agar 15 min me upload stuck hota hai, toh automatically fail hokar wapas try karega
+                        timeout=900 # 15 min max time per local upload
                     )
                     upload_success = True
                     break
                 except asyncio.TimeoutError:
-                    # Agar percentage atak jaye toh ye catch karega aur retry karega
                     pass
                 except FloodWait as e:
                     await asyncio.sleep(e.value + 3)
@@ -330,7 +333,7 @@ async def process_queue():
             if upload_success:
                  await msg.delete()
             else:
-                 await msg.edit_text("❌ Upload failed after multiple attempts. (Telegram Server Error)")
+                 await msg.edit_text("❌ Upload failed after multiple attempts (Telegram Timeout).")
 
             # File cleanup
             if os.path.exists(filename): os.remove(filename)
@@ -475,7 +478,7 @@ async def cancel_callback(client, callback_query):
 if __name__ == "__main__":
     print("========================================")
     print("Bot is running v2.7 purely on Render Cloud!")
-    print("Features: Bulk Anti-Freeze | Anti-Upload-Hang | Smart Thumbnail")
+    print("Features: Bulk Anti-Freeze | Smart Thumbnail | Queue | Fallback Fixed")
     print("========================================")
     
     loop = asyncio.get_event_loop()
