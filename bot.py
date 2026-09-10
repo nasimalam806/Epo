@@ -40,6 +40,24 @@ def format_bytes(size):
         n += 1
     return f"{round(size, 2)} {dic_powerN[n]}"
 
+# 🔥 NAYA: Thumbnail nikalne ka function
+def generate_thumbnail(video_path, thumbnail_path):
+    try:
+        # Video ke pehle 2nd second ka ek frame nikalega
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-ss", "00:00:02", "-i", video_path, 
+            "-vframes", "1", "-q:v", "2", 
+            "-vf", "scale=320:-1", # Telegram thumbnails chote hone chahiye
+            thumbnail_path, "-y"
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.path.exists(thumbnail_path):
+            return thumbnail_path
+    except Exception:
+        pass
+    return None
+
 # ==========================================
 # 3. LIVE PROGRESS BAR ENGINE (WITH CANCEL)
 # ==========================================
@@ -93,7 +111,7 @@ class MyLogger(object):
 
 def get_formats(url):
     ydl_opts = {
-        'socket_timeout': 15, # 🔥 FIX: Infinite loading se bachne ke liye
+        'socket_timeout': 15, 
         'retries': 2,
         'quiet': True,
         'noplaylist': True,
@@ -119,7 +137,7 @@ def get_formats(url):
 
 def extract_info_only(url, selected_res):
     ydl_opts = {
-        'socket_timeout': 15, # 🔥 FIX
+        'socket_timeout': 15, 
         'retries': 2,
         'format': f'best[height<={selected_res}]', 
         'quiet': True,
@@ -135,7 +153,7 @@ def download_with_ytdlp(url, msg_id, selected_res):
     if CANCEL_TASKS.get(msg_id): return None, None
     
     ydl_opts = {
-        'socket_timeout': 15, # 🔥 FIX
+        'socket_timeout': 15, 
         'retries': 2,
         'outtmpl': '%(id)s.%(ext)s',
         'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
@@ -234,6 +252,10 @@ async def process_queue():
             if not filename:
                 raise Exception("Download failed due to an unknown issue.")
 
+            # Thumbnail Generator lagaya gaya
+            thumb_path = f"thumb_{msg.id}.jpg"
+            thumb = generate_thumbnail(filename, thumb_path)
+
             local_title = info.get('title', 'Unknown Title')
             local_website = info.get('extractor_key', 'Unknown Website')
             local_caption = (
@@ -247,9 +269,11 @@ async def process_queue():
             start_time = time.time()
             
             try:
+                # Upload function me thumb add kiya gaya
                 await app.send_video(
                     chat_id=chat_id,
                     video=filename,
+                    thumb=thumb, 
                     caption=local_caption,
                     supports_streaming=True,
                     progress=progress_bar,
@@ -262,7 +286,9 @@ async def process_queue():
                 else:
                     raise e 
 
+            # File cleanup
             if os.path.exists(filename): os.remove(filename)
+            if thumb and os.path.exists(thumb): os.remove(thumb)
 
         except Exception as e:
             if "Cancelled" in str(e):
@@ -274,6 +300,8 @@ async def process_queue():
             try:
                 if 'filename' in locals() and os.path.exists(filename) and not filename.startswith("YTDLP_ERROR:"):
                     os.remove(filename)
+                if 'thumb_path' in locals() and os.path.exists(thumb_path):
+                    os.remove(thumb_path)
             except: pass
             
         finally:
@@ -292,7 +320,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v2.1 Premium Downloader hoon.\n\n"
+        "Hello! Main v2.2 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -329,9 +357,9 @@ async def handle_links(client, message):
             try:
                 msg = await message.reply_text(f"⏳ Auto-Queue: {url}\n(Position: {position} | Quality: {auto_quality}p)", disable_web_page_preview=True)
                 await download_queue.put((url, message.chat.id, msg, auto_quality))
-                await asyncio.sleep(1.5) # 🔥 FIX: Telegram Flood limits se bachne ke liye 1.5s delay
+                await asyncio.sleep(1.5) 
             except Exception as e:
-                pass # Agar spam limit aa jaye toh rukega nahi
+                pass 
             continue
             
         # Normal Flow 
@@ -398,8 +426,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.1 purely on Render Cloud!")
-    print("Features: Bulk Auto-Quality | Queue | Smart Dual-Mode")
+    print("Bot is running v2.2 purely on Render Cloud!")
+    print("Features: Bulk Auto-Quality | Thumbnail Fix | Queue")
     print("========================================")
     
     loop = asyncio.get_event_loop()
