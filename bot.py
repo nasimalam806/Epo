@@ -91,10 +91,9 @@ class MyLogger(object):
     def warning(self, msg): pass
     def error(self, msg): pass
 
-# NAYA: Referer parameter add kiya gaya hai
 def get_formats(url, referer=None):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    if referer: headers['Referer'] = referer # Jhootha Referer
+    if referer: headers['Referer'] = referer
         
     ydl_opts = {
         'quiet': True, 'noplaylist': True,
@@ -195,7 +194,7 @@ def download_with_gallerydl(url, msg_id):
 async def process_queue():
     while True:
         task = await download_queue.get()
-        url, chat_id, msg, selected_res, referer = task  # NAYA: Referer variable unpack kiya
+        url, chat_id, msg, selected_res, referer = task  
         
         if url in queue_display: queue_display.remove(url) 
         if CANCEL_TASKS.get(msg.id):
@@ -211,9 +210,14 @@ async def process_queue():
             except: info_direct = None
             if CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
 
+            # BUG FIX: Handle if info_direct is None
             direct_url = info_direct.get('url') if info_direct else None
             title = info_direct.get('title', 'Protected Video') if info_direct else 'Protected Video'
-            website = info_direct.get('extractor_key', 'Custom Referer Mode') if referer else info_direct.get('extractor_key', 'Unknown')
+            
+            if info_direct:
+                website = info_direct.get('extractor_key', 'Unknown')
+            else:
+                website = 'Custom Referer Mode' if referer else 'Direct File'
             
             caption_text = f"**🎬 Title:** {title}\n**🌐 Website:** {website}\n**⚙️ Quality:** {selected_res}p\n**🔗 Source:** [Link]({referer if referer else url})"
             
@@ -243,12 +247,17 @@ async def process_queue():
             if not filename or "ERROR" in filename:
                 raise Exception("Saare engines block ho gaye (Shayad Cloudflare ne block kiya).")
 
+            # BUG FIX: Handle local info is None
+            local_title = info.get('title', 'Unknown Title') if info else 'Unknown Title'
+            local_website = info.get('extractor_key', 'Fallback Downloader') if info else 'Fallback Downloader'
+            local_caption = f"**🎬 Title:** {local_title}\n**🌐 Website:** {local_website}\n**⚙️ Quality:** {selected_res}p\n**🔗 Source:** [Link]({referer if referer else url})"
+
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
             
             try:
                 await app.send_video(
-                    chat_id=chat_id, video=filename, caption=caption_text,
+                    chat_id=chat_id, video=filename, caption=local_caption,
                     supports_streaming=True, progress=progress_bar, progress_args=(msg, start_time, "Uploading")
                 )
                 await msg.delete()
@@ -293,13 +302,12 @@ async def handle_links(client, message):
     for line in lines:
         if not line.startswith("http"): continue
         
-        # NAYA: Check karna ki kya user ne | laga kar Referer bheja hai
         parts = line.split('|')
         url = parts[0].strip()
         referer = parts[1].strip() if len(parts) > 1 else None
 
         msg = await message.reply_text(f"🔍 Fetching quality options... Please wait!")
-        URL_CACHE[msg.id] = {'url': url, 'referer': referer} # Cache me dono save karega
+        URL_CACHE[msg.id] = {'url': url, 'referer': referer} 
         
         try:
             res_list, website = await asyncio.to_thread(get_formats, url, referer)
@@ -342,7 +350,6 @@ async def select_resolution(client, callback_query):
     position = len(queue_display) + 1
     queue_display.append(url)
     
-    # Line me lagate waqt referer bhi bhejenge
     await download_queue.put((url, callback_query.message.chat.id, callback_query.message, selected_res, referer))
     await callback_query.message.edit_text(f"⏳ Line me lag gaya!\n(Position: {position} | Quality: {selected_res}p)")
 
