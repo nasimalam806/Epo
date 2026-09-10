@@ -46,7 +46,7 @@ def generate_thumbnail(video_path, thumbnail_path):
         # Video ke pehle 2nd second ka ek frame nikalega
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-ss", "00:00:02", "-i", video_path, 
+            "-ss", "00:50:00", "-i", video_path, 
             "-vframes", "1", "-q:v", "2", 
             "-vf", "scale=320:-1", # Telegram thumbnails chote hone chahiye
             thumbnail_path, "-y"
