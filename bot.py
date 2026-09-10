@@ -13,11 +13,14 @@ from pyrogram.errors import MessageNotModified
 from yt_dlp.networking.impersonate import ImpersonateTarget
 
 # ==========================================
-# 1. BOT CREDENTIALS
+# 1. BOT CREDENTIALS & PROXY
 # ==========================================
 API_ID = int(os.environ.get("API_ID", 0))        
 API_HASH = os.environ.get("API_HASH", "")    
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")  
+
+# 🔥 NAYA: Yahan aap apni Proxy daalenge (Jab expire ho jaye toh bas ise badal dena)
+PROXY = "socks5://46.30.41.59:9956"
 
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -91,7 +94,7 @@ class MyLogger(object):
     def warning(self, msg): pass
     def error(self, msg): pass
 
-# 🔥 NAYA ENGINE: DIRECT FORCE DOWNLOADER (With Error Logger)
+# 🔥 NAYA ENGINE: DIRECT FORCE DOWNLOADER (WITH SOCKS5 PROXY)
 def download_direct_force(url, msg_id, referer=None):
     if CANCEL_TASKS.get(msg_id): return None, "CANCELLED"
     filename = f"force_{msg_id}.mp4"
@@ -110,18 +113,22 @@ def download_direct_force(url, msg_id, referer=None):
             
         cmd.append(filename)
         
-        # Capture Output taaki asli error pata chale
-        process = subprocess.run(cmd, capture_output=True, text=True)
+        # PROXY ENVIRONMENT SETUP FOR FFMPEG
+        env = os.environ.copy()
+        if PROXY:
+            env["http_proxy"] = PROXY
+            env["https_proxy"] = PROXY
+            env["all_proxy"] = PROXY
+        
+        process = subprocess.run(cmd, capture_output=True, text=True, env=env)
             
         if os.path.exists(filename) and os.path.getsize(filename) > 1024:
-            return {"title": "FFmpeg Direct Fetch", "extractor_key": "FFmpeg Master"}, filename
+            return {"title": "FFmpeg (Proxied)", "extractor_key": "Proxy Master"}, filename
         else:
-            # Agar file nahi bani, toh FFmpeg ka error bhejo
             error_msg = process.stderr[-300:] if process.stderr else "Unknown FFmpeg Error (or file too small)"
             return None, f"FORCE_ERROR: {error_msg}"
             
     except Exception as e:
-        # Agar FFmpeg installed hi nahi hai
         return None, f"FORCE_ERROR: System Error - {str(e)}"
 
 def get_formats(url, referer=None):
@@ -129,6 +136,7 @@ def get_formats(url, referer=None):
     if referer: headers['Referer'] = referer
     ydl_opts = {
         'quiet': True, 'noplaylist': True,
+        'proxy': PROXY, # PROXY ATTACHED
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
         'http_headers': headers
@@ -154,6 +162,7 @@ def extract_info_only(url, selected_res, referer=None):
     ydl_opts = {
         'format': f'best[height<={selected_res}]',
         'quiet': True, 'noplaylist': True,
+        'proxy': PROXY, # PROXY ATTACHED
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
         'http_headers': headers
@@ -170,10 +179,11 @@ def download_with_ytdlp(url, msg_id, selected_res, referer=None):
         'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
         'merge_output_format': 'mp4',
         'fixup': 'never', 'quiet': True, 'noplaylist': True,
+        'proxy': PROXY, # PROXY ATTACHED
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
         'external_downloader': 'aria2c',
-        'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M'],
+        'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M', f'--all-proxy={PROXY}' if PROXY else ''],
         'http_headers': headers,
         'logger': MyLogger(msg_id) 
     }
@@ -208,22 +218,21 @@ async def process_queue():
             
             # 🔥 BYPASS: Agar direct file hai ya Referer diya hai toh FFmpeg chalega
             if referer or url.endswith(".mp4") or url.endswith(".m3u8"):
-                await msg.edit_text(f"⚡ Forced FFmpeg Download Active...\n🛡️ Referer: {'Yes' if referer else 'No'}", reply_markup=cancel_markup)
+                await msg.edit_text(f"⚡ Forced FFmpeg Download Active...\n🛡️ Referer: {'Yes' if referer else 'No'}\n🌍 Proxy: {'NL (Active)' if PROXY else 'Off'}", reply_markup=cancel_markup)
                 info, filename = await asyncio.to_thread(download_direct_force, url, msg.id, referer)
                 if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
                 
-                # BUGFIX: Real error show karega
                 if not filename or filename.startswith("FORCE_ERROR"):
                     real_error = filename.replace("FORCE_ERROR: ", "").strip() if filename else "Unknown Error"
                     raise Exception(f"FFmpeg Failed!\n\n**Asli Wajah:**\n`{real_error}`")
             else:
                 # NORMAL FLOW (yt-dlp)
-                await msg.edit_text(f"⚡ Downloading locally (yt-dlp)...", reply_markup=cancel_markup)
+                await msg.edit_text(f"⚡ Downloading locally (yt-dlp)...\n🌍 Proxy: {'Active' if PROXY else 'Off'}", reply_markup=cancel_markup)
                 info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id, selected_res, referer)
                 if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
                 
                 if not info and filename and filename.startswith("YTDLP_ERROR:"):
-                    raise Exception("yt-dlp Blocked (Shayad Render IP Ban hai).")
+                    raise Exception(f"yt-dlp Error: {filename}")
 
             local_title = info.get('title', 'Unknown Title') if info else 'Unknown Title'
             local_website = info.get('extractor_key', 'FFmpeg Extractor') if info else 'FFmpeg Extractor'
@@ -231,6 +240,136 @@ async def process_queue():
 
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
+            
+            try:
+                await app.send_video(
+                    chat_id=chat_id, video=filename, caption=local_caption,
+                    supports_streaming=True, progress=progress_bar, progress_args=(msg, start_time, "Uploading")
+                )
+                await msg.delete()
+            except Exception as e:
+                if "Upload Cancelled" in str(e): raise Exception("Cancelled by user")
+                else: raise e 
+            if os.path.exists(filename): os.remove(filename)
+
+        except Exception as e:
+            if "Cancelled" in str(e):
+                 await msg.edit_text("❌ Video Download/Upload Rok Diya Gaya Hai.")
+                 subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                 subprocess.run(["pkill", "-f", "ffmpeg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                 await msg.edit_text(f"❌ Error: {str(e)}")
+            try:
+                if 'filename' in locals() and os.path.exists(filename) and not "ERROR" in filename: os.remove(filename)
+            except: pass
+        finally:
+            if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
+            if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
+            try: download_queue.task_done()
+            except: pass
+
+# ==========================================
+# 6. TELEGRAM COMMANDS & HANDLERS
+# ==========================================
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text("Hello! Main v4.3 Premium Downloader hoon.\n(Naya Feature: SOCKS5 Proxy Integrated 🌍)")
+
+@app.on_message(filters.command("queue"))
+async def show_queue(client, message):
+    if not queue_display:
+        await message.reply_text("📭 Queue bilkul khaali hai! Koi naya link bhejein.")
+        return
+    text = "**📋 Line me lagi hui videos:**\n\n"
+    for i, url in enumerate(queue_display): text += f"{i+1}. {url}\n"
+    await message.reply_text(text)
+
+@app.on_message(filters.text & ~filters.command(["start", "queue"]))
+async def handle_links(client, message):
+    lines = message.text.split('\n') 
+    for line in lines:
+        if not line.startswith("http"): continue
+        
+        parts = line.split('|')
+        url = parts[0].strip()
+        referer = parts[1].strip() if len(parts) > 1 else None
+
+        # 🔥 SUPER HACK
+        if referer or url.endswith(".mp4") or url.endswith(".m3u8"):
+            position = len(queue_display) + 1
+            queue_display.append(url)
+            msg = await message.reply_text(f"⚡ FFmpeg Proxy Triggered! Skipping checks... Line me lag gaya!\n(Position: {position})")
+            await download_queue.put((url, message.chat.id, msg, 1080, referer))
+            continue
+
+        msg = await message.reply_text(f"🔍 Fetching quality options using Proxy... Please wait!")
+        URL_CACHE[msg.id] = {'url': url, 'referer': referer} 
+        
+        try:
+            res_list, website = await asyncio.to_thread(get_formats, url, referer)
+            if not res_list: res_list = [360, 480, 720, 1080] 
+            
+            buttons = []
+            row = []
+            for res in res_list:
+                row.append(InlineKeyboardButton(f"🎬 {res}p", callback_data=f"res_{res}_{msg.id}"))
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row: buttons.append(row)
+            
+            buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")])
+            reply_markup = InlineKeyboardMarkup(buttons)
+            
+            text_msg = f"**🔗 Link:** {url}\n**🌐 Source:** {website}"
+            if referer: text_msg += f"\n🛡️ **Referer Bypass:** {referer}"
+            text_msg += "\n\n👇 **Select Quality to Download:**"
+            
+            await msg.edit_text(text_msg, reply_markup=reply_markup, disable_web_page_preview=True)
+        except Exception as e:
+            await msg.edit_text(f"❌ Error fetching qualities: {str(e)}")
+
+@app.on_callback_query(filters.regex(r"^res_"))
+async def select_resolution(client, callback_query):
+    data = callback_query.data.split("_")
+    selected_res = int(data[1])
+    msg_id = int(data[2])
+    
+    cache_data = URL_CACHE.get(msg_id)
+    if not cache_data:
+         await callback_query.answer("Error: Link purana ho gaya hai, wapas link bhejein.", show_alert=True)
+         return
+    
+    url = cache_data['url']
+    referer = cache_data['referer']
+    
+    position = len(queue_display) + 1
+    queue_display.append(url)
+    
+    await download_queue.put((url, callback_query.message.chat.id, callback_query.message, selected_res, referer))
+    await callback_query.message.edit_text(f"⏳ Line me lag gaya!\n(Position: {position} | Quality: {selected_res}p)")
+
+@app.on_callback_query(filters.regex(r"^cancel_"))
+async def cancel_callback(client, callback_query):
+    msg_id = int(callback_query.data.split("_")[1])
+    CANCEL_TASKS[msg_id] = True
+    STOP_UPLOAD[msg_id] = True 
+    await callback_query.answer("Cancelling task... Please wait!", show_alert=True)
+    try: await callback_query.message.edit_text("❌ Task Cancelled.")
+    except: pass
+
+# ==========================================
+# 7. BOT RUNNER
+# ==========================================
+if __name__ == "__main__":
+    print("========================================")
+    print("Bot is running v4.3 purely on Render Cloud!")
+    print("Features: Master FFmpeg Engine | Anti-Hotlink | SOCKS5 PROXY")
+    print("========================================")
+    
+    loop = asyncio.get_event_loop()
+    loop.create_task(process_queue())
+    app.run() time.time()
             
             try:
                 await app.send_video(
