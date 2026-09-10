@@ -20,7 +20,7 @@ API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")  
 
 # 🔥 NAYA: Yahan aap apni Proxy daalenge (Jab expire ho jaye toh bas ise badal dena)
-PROXY = "socks5://85.122.120.46"
+PROXY = "socks4://207.180.205.36"
 
 app = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
