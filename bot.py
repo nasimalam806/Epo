@@ -78,7 +78,7 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
             pass
 
 # ==========================================
-# 4. DOWNLOAD ENGINES (YTDLP + FALLBACKS)
+# 4. DOWNLOAD ENGINES (FORCE + YTDLP + FALLBACKS)
 # ==========================================
 class CancelledError(Exception):
     pass
@@ -91,10 +91,36 @@ class MyLogger(object):
     def warning(self, msg): pass
     def error(self, msg): pass
 
+# 🔥 NAYA ENGINE: DIRECT FORCE DOWNLOADER (Bypasses Everything)
+def download_direct_force(url, msg_id, referer=None):
+    if CANCEL_TASKS.get(msg_id): return None, "CANCELLED"
+    filename = f"force_{msg_id}.mp4"
+    try:
+        if ".m3u8" in url:
+            cmd = ["ffmpeg", "-y"]
+            if referer:
+                cmd.extend(["-headers", f"Referer: {referer}\r\nUser-Agent: Mozilla/5.0\r\n"])
+            else:
+                cmd.extend(["-user_agent", "Mozilla/5.0"])
+            cmd.extend(["-i", url, "-c", "copy", "-bsf:a", "aac_adtstoasc", filename])
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            cmd = ["aria2c", "-c", "-x", "16", "-s", "16", "-k", "1M"]
+            if referer:
+                cmd.append(f"--header=Referer: {referer}")
+            cmd.append("--header=User-Agent: Mozilla/5.0")
+            cmd.extend(["-o", filename, url])
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+        if os.path.exists(filename) and os.path.getsize(filename) > 1024:
+            return {"title": "Direct Extract", "extractor_key": "Force Engine"}, filename
+    except Exception:
+        pass
+    return None, "FORCE_ERROR"
+
 def get_formats(url, referer=None):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     if referer: headers['Referer'] = referer
-        
     ydl_opts = {
         'quiet': True, 'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
@@ -109,11 +135,10 @@ def get_formats(url, referer=None):
             for f in formats:
                 h = f.get('height')
                 if h and isinstance(h, int) and h >= 144: resolutions.add(h)
-            
             common_res = [144, 240, 360, 480, 720, 1080, 1440, 2160]
             available_res = sorted([r for r in resolutions if r in common_res])
             if not available_res: available_res = sorted(list(resolutions))
-            return available_res, info.get('extractor_key', 'Direct Video / Website')
+            return available_res, info.get('extractor_key', 'Direct Video')
     except:
         return [360, 480, 720, 1080], "Fallback Engine"
 
@@ -134,7 +159,6 @@ def download_with_ytdlp(url, msg_id, selected_res, referer=None):
     if CANCEL_TASKS.get(msg_id): return None, None
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     if referer: headers['Referer'] = referer
-    
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
         'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
@@ -159,35 +183,6 @@ def download_with_ytdlp(url, msg_id, selected_res, referer=None):
     except CancelledError: return None, "CANCELLED"
     except Exception as e: return None, f"YTDLP_ERROR: {str(e)}"
 
-# --- FALLBACK 1: COBALT API ---
-def download_with_cobalt(url, msg_id, quality):
-    if CANCEL_TASKS.get(msg_id): return None, "CANCELLED"
-    try:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        data = {"url": url, "vQuality": str(quality)}
-        res = requests.post("https://co.wuk.sh/api/json", headers=headers, json=data, timeout=30)
-        res_json = res.json()
-        if res_json.get("status") in ["stream", "redirect"]:
-            direct_link = res_json.get("url")
-            filename = f"cobalt_{msg_id}.mp4"
-            subprocess.run(["aria2c", "-c", "-x", "16", "-s", "16", "-k", "1M", "-o", filename, direct_link], stdout=subprocess.DEVNULL)
-            if os.path.exists(filename): return {"title": "Cobalt Fetch", "extractor_key": "Cobalt API"}, filename
-    except: pass
-    return None, "COBALT_ERROR"
-
-# --- FALLBACK 2: GALLERY-DL ---
-def download_with_gallerydl(url, msg_id):
-    if CANCEL_TASKS.get(msg_id): return None, "CANCELLED"
-    try:
-        filename = f"gdl_{msg_id}.mp4"
-        subprocess.run(["gallery-dl", "-D", ".", "-f", filename, url], capture_output=True)
-        files = [f for f in os.listdir('.') if os.path.isfile(f) and (f.endswith('.mp4') or f.endswith('.mkv'))]
-        if files:
-             files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-             return {"title": "Gallery-DL", "extractor_key": "Gallery-DL"}, files[0]
-    except: pass
-    return None, "GDL_ERROR"
-
 # ==========================================
 # 5. BACKGROUND WORKER (QUEUE SYSTEM)
 # ==========================================
@@ -204,52 +199,26 @@ async def process_queue():
 
         try:
             cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")]])
-            await msg.edit_text("🔍 Checking Direct Link...", reply_markup=cancel_markup)
             
-            try: info_direct = await asyncio.to_thread(extract_info_only, url, selected_res, referer)
-            except: info_direct = None
-            if CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
-
-            # BUG FIX: Handle if info_direct is None
-            direct_url = info_direct.get('url') if info_direct else None
-            title = info_direct.get('title', 'Protected Video') if info_direct else 'Protected Video'
-            
-            if info_direct:
-                website = info_direct.get('extractor_key', 'Unknown')
-            else:
-                website = 'Custom Referer Mode' if referer else 'Direct File'
-            
-            caption_text = f"**🎬 Title:** {title}\n**🌐 Website:** {website}\n**⚙️ Quality:** {selected_res}p\n**🔗 Source:** [Link]({referer if referer else url})"
-            
-            if direct_url:
-                try:
-                    await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
-                    await app.send_video(chat_id=chat_id, video=direct_url, caption=caption_text, supports_streaming=True)
-                    await msg.delete()
-                    if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
-                    if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
-                    download_queue.task_done()
-                    continue 
-                except: pass 
-
-            await msg.edit_text(f"⚡ Downloading locally...\nQuality: {selected_res}p\n🛡️ Referer Bypass: {'Active' if referer else 'Inactive'}", reply_markup=cancel_markup)
-            info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id, selected_res, referer)
-            if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
-            
-            if not info and filename and filename.startswith("YTDLP_ERROR:"):
-                await msg.edit_text(f"⚠️ yt-dlp failed. Trying Fallback 1...", reply_markup=cancel_markup)
-                info, filename = await asyncio.to_thread(download_with_cobalt, url, msg.id, selected_res)
+            # 🔥 BYPASS: Agar direct file hai ya Referer diya hai toh force engine chalega
+            if referer or url.endswith(".mp4") or url.endswith(".m3u8"):
+                await msg.edit_text(f"⚡ Forced Direct Download Active...\n🛡️ Referer: {'Yes' if referer else 'No'}", reply_markup=cancel_markup)
+                info, filename = await asyncio.to_thread(download_direct_force, url, msg.id, referer)
+                if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
                 
-            if not info and filename and filename.startswith("COBALT_ERROR"):
-                await msg.edit_text(f"⚠️ Cobalt failed. Trying Fallback 2...", reply_markup=cancel_markup)
-                info, filename = await asyncio.to_thread(download_with_gallerydl, url, msg.id)
+                if not filename or filename.startswith("FORCE_ERROR"):
+                    raise Exception("Forced Engine failed. Link expire ho gaya hai ya block hai.")
+            else:
+                # NORMAL FLOW (yt-dlp)
+                await msg.edit_text(f"⚡ Downloading locally (yt-dlp)...", reply_markup=cancel_markup)
+                info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id, selected_res, referer)
+                if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
+                
+                if not info and filename and filename.startswith("YTDLP_ERROR:"):
+                    raise Exception("yt-dlp Blocked (Shayad Render IP Ban hai).")
 
-            if not filename or "ERROR" in filename:
-                raise Exception("Saare engines block ho gaye (Shayad Cloudflare ne block kiya).")
-
-            # BUG FIX: Handle local info is None
             local_title = info.get('title', 'Unknown Title') if info else 'Unknown Title'
-            local_website = info.get('extractor_key', 'Fallback Downloader') if info else 'Fallback Downloader'
+            local_website = info.get('extractor_key', 'Direct/Forced Downloader') if info else 'Direct/Forced Downloader'
             local_caption = f"**🎬 Title:** {local_title}\n**🌐 Website:** {local_website}\n**⚙️ Quality:** {selected_res}p\n**🔗 Source:** [Link]({referer if referer else url})"
 
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
@@ -265,10 +234,12 @@ async def process_queue():
                 if "Upload Cancelled" in str(e): raise Exception("Cancelled by user")
                 else: raise e 
             if os.path.exists(filename): os.remove(filename)
+
         except Exception as e:
             if "Cancelled" in str(e):
                  await msg.edit_text("❌ Video Download/Upload Rok Diya Gaya Hai.")
                  subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                 subprocess.run(["pkill", "-f", "ffmpeg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
                  await msg.edit_text(f"❌ Error: {str(e)}")
             try:
@@ -285,7 +256,7 @@ async def process_queue():
 # ==========================================
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Hello! Main v3.0 Premium Downloader hoon.\nNormal link bhejein, ya phir security bypass ke liye `URL | Referer` bhejein!")
+    await message.reply_text("Hello! Main v4.0 Premium Downloader hoon.\n(Naya Feature: Direct Force Download Support for .mp4/.m3u8)")
 
 @app.on_message(filters.command("queue"))
 async def show_queue(client, message):
@@ -306,6 +277,16 @@ async def handle_links(client, message):
         url = parts[0].strip()
         referer = parts[1].strip() if len(parts) > 1 else None
 
+        # 🔥 SUPER HACK: Agar Referer diya hai, ya URL ke end me .mp4/.m3u8 hai, toh Quality fetch skip kardo
+        if referer or url.endswith(".mp4") or url.endswith(".m3u8"):
+            position = len(queue_display) + 1
+            queue_display.append(url)
+            msg = await message.reply_text(f"⚡ Direct File Detected! Skipping checks... Line me lag gaya!\n(Position: {position})")
+            # Seedha Queue me bhej do (default 1080p man kar)
+            await download_queue.put((url, message.chat.id, msg, 1080, referer))
+            continue
+
+        # Normal Website Flow
         msg = await message.reply_text(f"🔍 Fetching quality options... Please wait!")
         URL_CACHE[msg.id] = {'url': url, 'referer': referer} 
         
@@ -367,8 +348,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v3.1 purely on Render Cloud!")
-    print("Features: Anti-Hotlink Bypass (Referer) | Quality | 3x Engines")
+    print("Bot is running v4.0 purely on Render Cloud!")
+    print("Features: Anti-Hotlink | Direct Force Download | Quality")
     print("========================================")
     
     loop = asyncio.get_event_loop()
