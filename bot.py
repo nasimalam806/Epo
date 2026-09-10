@@ -40,13 +40,13 @@ def format_bytes(size):
         n += 1
     return f"{round(size, 2)} {dic_powerN[n]}"
 
-# 🔥 NAYA: Thumbnail nikalne ka function
+# 🔥 NAYA: Thumbnail nikalne ka function (Fixed at 50 seconds)
 def generate_thumbnail(video_path, thumbnail_path):
     try:
-        # Video ke pehle 2nd second ka ek frame nikalega
+        # Video ke 50th second ka ek frame nikalega (Intro logo se bachne ke liye)
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-ss", "00:00:60", "-i", video_path, 
+            "-ss", "00:00:50", "-i", video_path, 
             "-vframes", "1", "-q:v", "2", 
             "-vf", "scale=320:-1", # Telegram thumbnails chote hone chahiye
             thumbnail_path, "-y"
@@ -111,7 +111,7 @@ class MyLogger(object):
 
 def get_formats(url):
     ydl_opts = {
-        'socket_timeout': 15, 
+        'socket_timeout': 15, # 🔥 FIX: Infinite loading se bachne ke liye
         'retries': 2,
         'quiet': True,
         'noplaylist': True,
@@ -137,7 +137,7 @@ def get_formats(url):
 
 def extract_info_only(url, selected_res):
     ydl_opts = {
-        'socket_timeout': 15, 
+        'socket_timeout': 15, # 🔥 FIX
         'retries': 2,
         'format': f'best[height<={selected_res}]', 
         'quiet': True,
@@ -153,7 +153,7 @@ def download_with_ytdlp(url, msg_id, selected_res):
     if CANCEL_TASKS.get(msg_id): return None, None
     
     ydl_opts = {
-        'socket_timeout': 15, 
+        'socket_timeout': 15, # 🔥 FIX
         'retries': 2,
         'outtmpl': '%(id)s.%(ext)s',
         'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
@@ -320,7 +320,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v2.2 Premium Downloader hoon.\n\n"
+        "Hello! Main v2.3 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -426,8 +426,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.2 purely on Render Cloud!")
-    print("Features: Bulk Auto-Quality | Thumbnail Fix | Queue")
+    print("Bot is running v2.3 purely on Render Cloud!")
+    print("Features: Bulk Auto-Quality | 50s Thumbnail Fix | Queue")
     print("========================================")
     
     loop = asyncio.get_event_loop()
