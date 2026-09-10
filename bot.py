@@ -40,9 +40,10 @@ def format_bytes(size):
         n += 1
     return f"{round(size, 2)} {dic_powerN[n]}"
 
-# 🔥 NAYA: Smart Thumbnail Extractor (50s + Fallback)
+# 🔥 Smart Thumbnail Extractor (50s + Fallback)
 def generate_thumbnail(video_path, thumbnail_path):
     try:
+        # Step 1: Pehle 50 seconds par try karega (Intro logo se bachne ke liye)
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-ss", "00:00:50", "-i", video_path, 
@@ -52,9 +53,11 @@ def generate_thumbnail(video_path, thumbnail_path):
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
+        # Check karega ki kya image theek se bani hai
         if os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
             return thumbnail_path
             
+        # Step 2: Agar video 50 sec se choti hai, toh fallback 2 seconds par try karega
         cmd[5] = "00:00:02"
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
@@ -164,14 +167,13 @@ def download_with_ytdlp(url, msg, selected_res, loop):
     
     last_edit_time = [0]
     
-    # 🔥 FIX: Thread-safe progress update for local download
     def progress_hook(d):
         if CANCEL_TASKS.get(msg_id):
             raise CancelledError("Download Cancelled")
             
         if d['status'] == 'downloading':
             current_time = time.time()
-            if current_time - last_edit_time[0] > 5.0: # Updated interval to 5 sec to prevent FloodWait
+            if current_time - last_edit_time[0] > 5.0: 
                 last_edit_time[0] = current_time
                 
                 downloaded = d.get('downloaded_bytes', 0)
@@ -199,12 +201,11 @@ def download_with_ytdlp(url, msg, selected_res, loop):
                     
                 reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg_id}")]])
                 
-                # Asynchronous dispatch of the edit text to avoid blocking yt-dlp thread
                 async def edit_message():
                     try:
                         await msg.edit_text(text, reply_markup=reply_markup)
-                    except FloodWait as e:
-                        pass # Ignore and let the next loop handle it
+                    except FloodWait:
+                        pass 
                     except MessageNotModified:
                         pass
                 
@@ -255,6 +256,15 @@ async def process_queue():
         
         if url in queue_display:
             queue_display.remove(url) 
+
+        # 🔥 NAYA: Agar Bulk Queue se aya hai (to `msg` None hoga), yahan naya msg banega takki channel block na ho
+        if msg is None:
+            try:
+                msg = await app.send_message(chat_id, "⏳ Starting download process...")
+                URL_CACHE[msg.id] = url
+            except Exception:
+                download_queue.task_done()
+                continue
         
         if CANCEL_TASKS.get(msg.id):
             await msg.edit_text("❌ Task Cancelled before starting.")
@@ -415,7 +425,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v2.9 Premium Downloader hoon.\n\n"
+        "Hello! Main v3.0 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -464,22 +474,26 @@ async def handle_links(client, message):
         auto_quality = int(first_line)
         lines = lines[1:] 
 
+    # 🔥 FIX: Ab channel me 33 messages nahi aayenge, balki silently queue honge.
+    if auto_quality:
+        valid_urls = [u.strip() for u in lines if u.strip().startswith("http")]
+        if not valid_urls:
+            return
+            
+        for url in valid_urls:
+            queue_display.append(url)
+            # Yahan msg ki jagah None bhejenge taaki processing ke waqt hi message bane
+            await download_queue.put((url, message.chat.id, None, auto_quality))
+        
+        # Channel ko bas ek confirmation message jayega
+        await message.reply_text(f"✅ **Bulk Queue Active:** {len(valid_urls)} links added silently in background ({auto_quality}p).")
+        return
+
+    # Normal Flow (For Single Links without quality)
     for url in lines:
         url = url.strip()
         if not url.startswith("http"): continue
         
-        if auto_quality:
-            position = len(queue_display) + 1
-            queue_display.append(url)
-            try:
-                msg = await message.reply_text(f"⏳ Auto-Queue: {url}\n(Position: {position} | Quality: {auto_quality}p)", disable_web_page_preview=True)
-                URL_CACHE[msg.id] = url
-                await download_queue.put((url, message.chat.id, msg, auto_quality))
-                await asyncio.sleep(1.5) 
-            except Exception as e:
-                pass 
-            continue
-            
         msg = await message.reply_text(f"🔍 Fetching quality options... Please wait!")
         URL_CACHE[msg.id] = url
         
@@ -543,8 +557,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.9 purely on Render Cloud!")
-    print("Features: Local Download Bar | Cancel All | Wipeout Command")
+    print("Bot is running v3.0 purely on Render Cloud!")
+    print("Features: Silent Bulk Channel Queue | Download Bar | CancelAll")
     print("========================================")
     
     loop = asyncio.get_event_loop()
