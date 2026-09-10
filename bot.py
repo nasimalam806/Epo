@@ -78,7 +78,7 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
             pass
 
 # ==========================================
-# 4. DOWNLOAD ENGINES (FORCE + YTDLP + FALLBACKS)
+# 4. DOWNLOAD ENGINES (FORCE FFMPEG + YTDLP)
 # ==========================================
 class CancelledError(Exception):
     pass
@@ -91,29 +91,34 @@ class MyLogger(object):
     def warning(self, msg): pass
     def error(self, msg): pass
 
-# 🔥 NAYA ENGINE: DIRECT FORCE DOWNLOADER (Bypasses Everything)
+# 🔥 NAYA ENGINE: DIRECT FORCE DOWNLOADER (Ab poora FFmpeg par chalega!)
 def download_direct_force(url, msg_id, referer=None):
     if CANCEL_TASKS.get(msg_id): return None, "CANCELLED"
     filename = f"force_{msg_id}.mp4"
     try:
+        cmd = ["ffmpeg", "-y"]
+        
+        # Wahi exact User-Agent jo aapne Termux me use kiya tha
+        user_agent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
+        
+        # Referer header lagana
+        if referer:
+            cmd.extend(["-headers", f"Referer: {referer}\r\n"])
+            
+        cmd.extend(["-user_agent", user_agent])
+        cmd.extend(["-i", url, "-c", "copy"])
+        
+        # Agar m3u8 file hai, toh audio fix karna zaroori hota hai
         if ".m3u8" in url:
-            cmd = ["ffmpeg", "-y"]
-            if referer:
-                cmd.extend(["-headers", f"Referer: {referer}\r\nUser-Agent: Mozilla/5.0\r\n"])
-            else:
-                cmd.extend(["-user_agent", "Mozilla/5.0"])
-            cmd.extend(["-i", url, "-c", "copy", "-bsf:a", "aac_adtstoasc", filename])
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            cmd = ["aria2c", "-c", "-x", "16", "-s", "16", "-k", "1M"]
-            if referer:
-                cmd.append(f"--header=Referer: {referer}")
-            cmd.append("--header=User-Agent: Mozilla/5.0")
-            cmd.extend(["-o", filename, url])
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            cmd.extend(["-bsf:a", "aac_adtstoasc"])
+            
+        cmd.append(filename)
+        
+        # FFmpeg ko run karna
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
         if os.path.exists(filename) and os.path.getsize(filename) > 1024:
-            return {"title": "Direct Extract", "extractor_key": "Force Engine"}, filename
+            return {"title": "FFmpeg Direct Fetch", "extractor_key": "FFmpeg Master"}, filename
     except Exception:
         pass
     return None, "FORCE_ERROR"
@@ -200,14 +205,14 @@ async def process_queue():
         try:
             cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")]])
             
-            # 🔥 BYPASS: Agar direct file hai ya Referer diya hai toh force engine chalega
+            # 🔥 BYPASS: Agar direct file hai ya Referer diya hai toh FFmpeg chalega
             if referer or url.endswith(".mp4") or url.endswith(".m3u8"):
-                await msg.edit_text(f"⚡ Forced Direct Download Active...\n🛡️ Referer: {'Yes' if referer else 'No'}", reply_markup=cancel_markup)
+                await msg.edit_text(f"⚡ Forced FFmpeg Download Active...\n🛡️ Referer: {'Yes' if referer else 'No'}", reply_markup=cancel_markup)
                 info, filename = await asyncio.to_thread(download_direct_force, url, msg.id, referer)
                 if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
                 
                 if not filename or filename.startswith("FORCE_ERROR"):
-                    raise Exception("Forced Engine failed. Link expire ho gaya hai ya block hai.")
+                    raise Exception("FFmpeg failed. Link expire ho gaya hai ya block hai.")
             else:
                 # NORMAL FLOW (yt-dlp)
                 await msg.edit_text(f"⚡ Downloading locally (yt-dlp)...", reply_markup=cancel_markup)
@@ -218,7 +223,7 @@ async def process_queue():
                     raise Exception("yt-dlp Blocked (Shayad Render IP Ban hai).")
 
             local_title = info.get('title', 'Unknown Title') if info else 'Unknown Title'
-            local_website = info.get('extractor_key', 'Direct/Forced Downloader') if info else 'Direct/Forced Downloader'
+            local_website = info.get('extractor_key', 'FFmpeg Extractor') if info else 'FFmpeg Extractor'
             local_caption = f"**🎬 Title:** {local_title}\n**🌐 Website:** {local_website}\n**⚙️ Quality:** {selected_res}p\n**🔗 Source:** [Link]({referer if referer else url})"
 
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
@@ -256,7 +261,7 @@ async def process_queue():
 # ==========================================
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Hello! Main v4.0 Premium Downloader hoon.\n(Naya Feature: Direct Force Download Support for .mp4/.m3u8)")
+    await message.reply_text("Hello! Main v4.1 Premium Downloader hoon.\n(Naya Feature: Master FFmpeg Engine Support for .mp4/.m3u8)")
 
 @app.on_message(filters.command("queue"))
 async def show_queue(client, message):
@@ -277,12 +282,12 @@ async def handle_links(client, message):
         url = parts[0].strip()
         referer = parts[1].strip() if len(parts) > 1 else None
 
-        # 🔥 SUPER HACK: Agar Referer diya hai, ya URL ke end me .mp4/.m3u8 hai, toh Quality fetch skip kardo
+        # 🔥 SUPER HACK: Agar Referer diya hai, ya URL ke end me .mp4/.m3u8 hai, toh Seedha FFmpeg!
         if referer or url.endswith(".mp4") or url.endswith(".m3u8"):
             position = len(queue_display) + 1
             queue_display.append(url)
-            msg = await message.reply_text(f"⚡ Direct File Detected! Skipping checks... Line me lag gaya!\n(Position: {position})")
-            # Seedha Queue me bhej do (default 1080p man kar)
+            msg = await message.reply_text(f"⚡ FFmpeg Direct Triggered! Skipping checks... Line me lag gaya!\n(Position: {position})")
+            # Seedha Queue me bhej do
             await download_queue.put((url, message.chat.id, msg, 1080, referer))
             continue
 
@@ -348,8 +353,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v4.0 purely on Render Cloud!")
-    print("Features: Anti-Hotlink | Direct Force Download | Quality")
+    print("Bot is running v4.1 purely on Render Cloud!")
+    print("Features: Master FFmpeg Engine | Anti-Hotlink")
     print("========================================")
     
     loop = asyncio.get_event_loop()
