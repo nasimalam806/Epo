@@ -40,20 +40,30 @@ def format_bytes(size):
         n += 1
     return f"{round(size, 2)} {dic_powerN[n]}"
 
-# 🔥 NAYA: Thumbnail nikalne ka function (Fixed at 50 seconds)
+# 🔥 NAYA: Smart Thumbnail Extractor (50s + Fallback)
 def generate_thumbnail(video_path, thumbnail_path):
     try:
-        # Video ke 50th second ka ek frame nikalega (Intro logo se bachne ke liye)
+        # Step 1: Pehle 50 seconds par try karega (Intro logo se bachne ke liye)
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-ss", "00:00:50", "-i", video_path, 
             "-vframes", "1", "-q:v", "2", 
-            "-vf", "scale=320:-1", # Telegram thumbnails chote hone chahiye
+            "-vf", "scale=320:-1", 
             thumbnail_path, "-y"
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if os.path.exists(thumbnail_path):
+        
+        # Check karega ki kya image theek se bani hai
+        if os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
             return thumbnail_path
+            
+        # Step 2: Agar video 50 sec se choti hai, toh fallback 2 seconds par try karega
+        cmd[5] = "00:00:02"
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        if os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
+            return thumbnail_path
+            
     except Exception:
         pass
     return None
@@ -111,8 +121,8 @@ class MyLogger(object):
 
 def get_formats(url):
     ydl_opts = {
-        'socket_timeout': 15, # 🔥 FIX: Infinite loading se bachne ke liye
-        'retries': 2,
+        'socket_timeout': 15, 
+        'retries': 3,
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
@@ -137,8 +147,8 @@ def get_formats(url):
 
 def extract_info_only(url, selected_res):
     ydl_opts = {
-        'socket_timeout': 15, # 🔥 FIX
-        'retries': 2,
+        'socket_timeout': 15, 
+        'retries': 3,
         'format': f'best[height<={selected_res}]', 
         'quiet': True,
         'noplaylist': True,
@@ -152,9 +162,11 @@ def extract_info_only(url, selected_res):
 def download_with_ytdlp(url, msg_id, selected_res):
     if CANCEL_TASKS.get(msg_id): return None, None
     
+    # 🔥 FIX: Added strictly robust timeouts so Bulk downloading doesn't freeze
     ydl_opts = {
-        'socket_timeout': 15, # 🔥 FIX
-        'retries': 2,
+        'socket_timeout': 15, 
+        'retries': 3,
+        'fragment_retries': 3,
         'outtmpl': '%(id)s.%(ext)s',
         'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
         'merge_output_format': 'mp4',
@@ -164,7 +176,7 @@ def download_with_ytdlp(url, msg_id, selected_res):
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
         'external_downloader': 'aria2c',
-        'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M'],
+        'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M', '--connect-timeout=15', '--timeout=20', '--max-tries=5'],
         'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'},
         'logger': MyLogger(msg_id) 
     }
@@ -236,6 +248,9 @@ async def process_queue():
                     if msg.id in CANCEL_TASKS: del CANCEL_TASKS[msg.id]
                     if msg.id in STOP_UPLOAD: del STOP_UPLOAD[msg.id]
                     download_queue.task_done()
+                    
+                    # 🔥 FIX: 2.5 second cooldown so the server doesn't freeze the connection on bulk
+                    await asyncio.sleep(2.5)
                     continue 
                 except Exception:
                     pass 
@@ -313,6 +328,9 @@ async def process_queue():
              download_queue.task_done()
         except ValueError:
              pass
+             
+        # 🔥 FIX: 2.5 seconds gap before starting the next video in bulk queue
+        await asyncio.sleep(2.5)
 
 # ==========================================
 # 6. TELEGRAM COMMANDS & HANDLERS
@@ -320,7 +338,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v2.3 Premium Downloader hoon.\n\n"
+        "Hello! Main v2.5 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -426,8 +444,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.3 purely on Render Cloud!")
-    print("Features: Bulk Auto-Quality | 50s Thumbnail Fix | Queue")
+    print("Bot is running v2.5 purely on Render Cloud!")
+    print("Features: Bulk Anti-Freeze | Smart Thumbnail | Queue")
     print("========================================")
     
     loop = asyncio.get_event_loop()
