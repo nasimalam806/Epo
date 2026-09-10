@@ -241,16 +241,21 @@ async def process_queue():
                 try:
                     await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
                     
-                    # 🔥 Upload logic with basic retry for direct URLs
+                    # 🔥 FIX: Timeout for direct uploads
                     for _ in range(3):
                         try:
-                            await app.send_video(
-                                chat_id=chat_id,
-                                video=direct_url,
-                                caption=caption_text,
-                                supports_streaming=True
+                            await asyncio.wait_for(
+                                app.send_video(
+                                    chat_id=chat_id,
+                                    video=direct_url,
+                                    caption=caption_text,
+                                    supports_streaming=True
+                                ),
+                                timeout=600 # 10 minutes timeout
                             )
                             break
+                        except asyncio.TimeoutError:
+                            pass # Retry loop will trigger
                         except FloodWait as e:
                             await asyncio.sleep(e.value + 2)
                         except Exception:
@@ -292,34 +297,40 @@ async def process_queue():
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
             
-            # 🔥 FIX: Robust Upload Mechanism to prevent getting stuck
+            # 🔥 FIX: Anti-Freeze Upload Mechanism (Timeout Error ko automatically theek karega)
             upload_success = False
             for attempt in range(3):
                 if CANCEL_TASKS.get(msg.id) or STOP_UPLOAD.get(msg.id):
                     raise Exception("Upload Cancelled")
                 try:
-                    await app.send_video(
-                        chat_id=chat_id,
-                        video=filename,
-                        thumb=thumb, 
-                        caption=local_caption,
-                        supports_streaming=True,
-                        progress=progress_bar,
-                        progress_args=(msg, start_time, "Uploading")
+                    await asyncio.wait_for(
+                        app.send_video(
+                            chat_id=chat_id,
+                            video=filename,
+                            thumb=thumb, 
+                            caption=local_caption,
+                            supports_streaming=True,
+                            progress=progress_bar,
+                            progress_args=(msg, start_time, "Uploading")
+                        ),
+                        timeout=900 # Agar 15 min me upload stuck hota hai, toh automatically fail hokar wapas try karega
                     )
                     upload_success = True
                     break
+                except asyncio.TimeoutError:
+                    # Agar percentage atak jaye toh ye catch karega aur retry karega
+                    pass
                 except FloodWait as e:
-                    await asyncio.sleep(e.value + 3) # Wait extra to be safe
+                    await asyncio.sleep(e.value + 3)
                 except Exception as e:
                     if "Upload Cancelled" in str(e):
                          raise e
-                    await asyncio.sleep(5) # Delay before retry
+                    await asyncio.sleep(5)
 
             if upload_success:
                  await msg.delete()
             else:
-                 await msg.edit_text("❌ Upload failed after multiple attempts.")
+                 await msg.edit_text("❌ Upload failed after multiple attempts. (Telegram Server Error)")
 
             # File cleanup
             if os.path.exists(filename): os.remove(filename)
@@ -357,7 +368,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v2.6 Premium Downloader hoon.\n\n"
+        "Hello! Main v2.7 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -463,8 +474,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.6 purely on Render Cloud!")
-    print("Features: Bulk Anti-Freeze | Smart Thumbnail | Robust Upload Retry")
+    print("Bot is running v2.7 purely on Render Cloud!")
+    print("Features: Bulk Anti-Freeze | Anti-Upload-Hang | Smart Thumbnail")
     print("========================================")
     
     loop = asyncio.get_event_loop()
