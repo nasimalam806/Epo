@@ -91,37 +91,38 @@ class MyLogger(object):
     def warning(self, msg): pass
     def error(self, msg): pass
 
-# 🔥 NAYA ENGINE: DIRECT FORCE DOWNLOADER (Ab poora FFmpeg par chalega!)
+# 🔥 NAYA ENGINE: DIRECT FORCE DOWNLOADER (With Error Logger)
 def download_direct_force(url, msg_id, referer=None):
     if CANCEL_TASKS.get(msg_id): return None, "CANCELLED"
     filename = f"force_{msg_id}.mp4"
     try:
         cmd = ["ffmpeg", "-y"]
-        
-        # Wahi exact User-Agent jo aapne Termux me use kiya tha
         user_agent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
         
-        # Referer header lagana
         if referer:
             cmd.extend(["-headers", f"Referer: {referer}\r\n"])
             
         cmd.extend(["-user_agent", user_agent])
         cmd.extend(["-i", url, "-c", "copy"])
         
-        # Agar m3u8 file hai, toh audio fix karna zaroori hota hai
         if ".m3u8" in url:
             cmd.extend(["-bsf:a", "aac_adtstoasc"])
             
         cmd.append(filename)
         
-        # FFmpeg ko run karna
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Capture Output taaki asli error pata chale
+        process = subprocess.run(cmd, capture_output=True, text=True)
             
         if os.path.exists(filename) and os.path.getsize(filename) > 1024:
             return {"title": "FFmpeg Direct Fetch", "extractor_key": "FFmpeg Master"}, filename
-    except Exception:
-        pass
-    return None, "FORCE_ERROR"
+        else:
+            # Agar file nahi bani, toh FFmpeg ka error bhejo
+            error_msg = process.stderr[-300:] if process.stderr else "Unknown FFmpeg Error (or file too small)"
+            return None, f"FORCE_ERROR: {error_msg}"
+            
+    except Exception as e:
+        # Agar FFmpeg installed hi nahi hai
+        return None, f"FORCE_ERROR: System Error - {str(e)}"
 
 def get_formats(url, referer=None):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -211,8 +212,10 @@ async def process_queue():
                 info, filename = await asyncio.to_thread(download_direct_force, url, msg.id, referer)
                 if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id): raise Exception("Cancelled by user")
                 
+                # BUGFIX: Real error show karega
                 if not filename or filename.startswith("FORCE_ERROR"):
-                    raise Exception("FFmpeg failed. Link expire ho gaya hai ya block hai.")
+                    real_error = filename.replace("FORCE_ERROR: ", "").strip() if filename else "Unknown Error"
+                    raise Exception(f"FFmpeg Failed!\n\n**Asli Wajah:**\n`{real_error}`")
             else:
                 # NORMAL FLOW (yt-dlp)
                 await msg.edit_text(f"⚡ Downloading locally (yt-dlp)...", reply_markup=cancel_markup)
@@ -261,7 +264,7 @@ async def process_queue():
 # ==========================================
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Hello! Main v4.1 Premium Downloader hoon.\n(Naya Feature: Master FFmpeg Engine Support for .mp4/.m3u8)")
+    await message.reply_text("Hello! Main v4.2 Premium Downloader hoon.\n(Naya Feature: Master FFmpeg Engine + Error Logging)")
 
 @app.on_message(filters.command("queue"))
 async def show_queue(client, message):
@@ -353,8 +356,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v4.1 purely on Render Cloud!")
-    print("Features: Master FFmpeg Engine | Anti-Hotlink")
+    print("Bot is running v4.2 purely on Render Cloud!")
+    print("Features: Master FFmpeg Engine | Anti-Hotlink | Error Tracker")
     print("========================================")
     
     loop = asyncio.get_event_loop()
