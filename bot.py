@@ -161,9 +161,53 @@ def extract_info_only(url, selected_res):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
 
-def download_with_ytdlp(url, msg_id, selected_res):
+# 🔥 FIX: Ab ye msg aur loop lega taaki Download progress update kar sake
+def download_with_ytdlp(url, msg, selected_res, loop):
+    msg_id = msg.id
     if CANCEL_TASKS.get(msg_id): return None, None
     
+    last_edit_time = [0]
+    
+    # 🔥 NAYA: Local Downloading ke time progress bar show karne ka hook
+    def progress_hook(d):
+        if CANCEL_TASKS.get(msg_id):
+            raise CancelledError("Download Cancelled")
+            
+        if d['status'] == 'downloading':
+            current_time = time.time()
+            if current_time - last_edit_time[0] > 3.0: # Har 3 second me update hoga
+                last_edit_time[0] = current_time
+                
+                downloaded = d.get('downloaded_bytes', 0)
+                total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+                speed = d.get('speed', 0)
+                
+                if total > 0:
+                    percentage = downloaded * 100 / total
+                    time_to_completion = round((total - downloaded) / speed) if speed and speed > 0 else 0
+                    
+                    progress = "[{0}{1}]".format(
+                        ''.join(["█" for i in range(math.floor(percentage / 10))]),
+                        ''.join(["░" for i in range(10 - math.floor(percentage / 10))])
+                    )
+                    
+                    text = f"⚡ **Downloading locally...**\n⚙️ Quality: {selected_res}p\n\n"
+                    text += f"📊 {progress} **{round(percentage, 2)}%**\n"
+                    text += f"📦 **Size:** {format_bytes(downloaded)} / {format_bytes(total)}\n"
+                    text += f"⚡ **Speed:** {format_bytes(speed)}/s\n"
+                    text += f"⏳ **ETA:** {time_to_completion} Seconds"
+                else:
+                    text = f"⚡ **Downloading locally...**\n⚙️ Quality: {selected_res}p\n\n"
+                    text += f"📦 **Downloaded:** {format_bytes(downloaded)}\n"
+                    text += f"⚡ **Speed:** {format_bytes(speed)}/s\n"
+                    
+                reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg_id}")]])
+                
+                try:
+                    asyncio.run_coroutine_threadsafe(msg.edit_text(text, reply_markup=reply_markup), loop)
+                except Exception:
+                    pass
+
     ydl_opts = {
         'socket_timeout': 15, 
         'retries': 3,
@@ -179,7 +223,8 @@ def download_with_ytdlp(url, msg_id, selected_res):
         'external_downloader': 'aria2c',
         'external_downloader_args': ['-c', '-x', '16', '-s', '16', '-k', '1M', '--connect-timeout=15', '--timeout=20', '--max-tries=5'],
         'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'},
-        'logger': MyLogger(msg_id) 
+        'logger': MyLogger(msg_id),
+        'progress_hooks': [progress_hook] # 🔥 Hook Attach kar diya
     }
     
     try:
@@ -241,7 +286,6 @@ async def process_queue():
                 try:
                     await msg.edit_text("🚀 Trying Direct Upload (Superfast)...", reply_markup=cancel_markup)
                     
-                    # 🔥 FIX: Direct upload logic (Agar fail hua toh skip nahi karega, local download pe jayega)
                     for _ in range(2):
                         try:
                             await asyncio.wait_for(
@@ -251,7 +295,7 @@ async def process_queue():
                                     caption=caption_text,
                                     supports_streaming=True
                                 ),
-                                timeout=60 # 60 seconds direct upload timeout
+                                timeout=60 
                             )
                             direct_success = True
                             break
@@ -272,11 +316,12 @@ async def process_queue():
                     download_queue.task_done()
                     await asyncio.sleep(2.5)
                     continue 
-                # Agar direct_success False raha, toh ye block automatically neeche chala jayega Local Download ke liye
 
             await msg.edit_text(f"⚡ Downloading locally...\nQuality: {selected_res}p", reply_markup=cancel_markup)
             
-            info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg.id, selected_res)
+            # 🔥 FIX: Changed function call to pass msg object and event loop
+            current_loop = asyncio.get_running_loop()
+            info, filename = await asyncio.to_thread(download_with_ytdlp, url, msg, selected_res, current_loop)
             
             if filename == "CANCELLED" or CANCEL_TASKS.get(msg.id):
                 raise Exception("Cancelled by user")
@@ -301,7 +346,6 @@ async def process_queue():
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
             
-            # 🔥 FIX: Timeout and Retry to prevent stuck uploads
             upload_success = False
             for attempt in range(3):
                 if CANCEL_TASKS.get(msg.id) or STOP_UPLOAD.get(msg.id):
@@ -317,7 +361,7 @@ async def process_queue():
                             progress=progress_bar,
                             progress_args=(msg, start_time, "Uploading")
                         ),
-                        timeout=900 # 15 min max time per local upload
+                        timeout=900 
                     )
                     upload_success = True
                     break
@@ -371,7 +415,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v2.7 Premium Downloader hoon.\n\n"
+        "Hello! Main v2.8 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -388,7 +432,34 @@ async def show_queue(client, message):
         text += f"{i+1}. {url}\n"
     await message.reply_text(text)
 
-@app.on_message(filters.text & ~filters.command(["start", "queue"]))
+# 🔥 NAYA COMMAND: /cancelall (Poora system clear karne ke liye)
+@app.on_message(filters.command("cancelall"))
+async def cancel_all(client, message):
+    global queue_display
+    
+    # 1. Display list saaf karo
+    queue_display.clear()
+    
+    # 2. Queue me lage huye saare upcoming videos hata do
+    while not download_queue.empty():
+        try:
+            download_queue.get_nowait()
+            download_queue.task_done()
+        except:
+            pass
+            
+    # 3. Background me chal rahe Aria2c aur FFmpeg ko forcibly maar do
+    subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["pkill", "-f", "ffmpeg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    # 4. Active tasks ko cancel flag bhej do
+    for msg_id in list(URL_CACHE.keys()) + list(CANCEL_TASKS.keys()) + list(STOP_UPLOAD.keys()):
+        CANCEL_TASKS[msg_id] = True
+        STOP_UPLOAD[msg_id] = True
+        
+    await message.reply_text("🗑️ **BAM!** Pura queue wipe out kar diya gaya hai! Saare atke hue downloads force-stop ho chuke hain. Bot ab ekdum free hai! ✅")
+
+@app.on_message(filters.text & ~filters.command(["start", "queue", "cancelall"]))
 async def handle_links(client, message):
     lines = message.text.split('\n')
     
@@ -407,6 +478,8 @@ async def handle_links(client, message):
             queue_display.append(url)
             try:
                 msg = await message.reply_text(f"⏳ Auto-Queue: {url}\n(Position: {position} | Quality: {auto_quality}p)", disable_web_page_preview=True)
+                # Dictionary me Msg ID save karna zaroori hai cancel_all ke liye
+                URL_CACHE[msg.id] = url
                 await download_queue.put((url, message.chat.id, msg, auto_quality))
                 await asyncio.sleep(1.5) 
             except Exception as e:
@@ -477,8 +550,8 @@ async def cancel_callback(client, callback_query):
 # ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v2.7 purely on Render Cloud!")
-    print("Features: Bulk Anti-Freeze | Smart Thumbnail | Queue | Fallback Fixed")
+    print("Bot is running v2.8 purely on Render Cloud!")
+    print("Features: Local Download Bar | Cancel All | Wipeout Command")
     print("========================================")
     
     loop = asyncio.get_event_loop()
