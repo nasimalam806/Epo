@@ -93,6 +93,8 @@ class MyLogger(object):
 
 def get_formats(url):
     ydl_opts = {
+        'socket_timeout': 15, # 🔥 FIX: Infinite loading se bachne ke liye
+        'retries': 2,
         'quiet': True,
         'noplaylist': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
@@ -117,6 +119,8 @@ def get_formats(url):
 
 def extract_info_only(url, selected_res):
     ydl_opts = {
+        'socket_timeout': 15, # 🔥 FIX
+        'retries': 2,
         'format': f'best[height<={selected_res}]', 
         'quiet': True,
         'noplaylist': True,
@@ -131,6 +135,8 @@ def download_with_ytdlp(url, msg_id, selected_res):
     if CANCEL_TASKS.get(msg_id): return None, None
     
     ydl_opts = {
+        'socket_timeout': 15, # 🔥 FIX
+        'retries': 2,
         'outtmpl': '%(id)s.%(ext)s',
         'format': f'bestvideo[height<={selected_res}]+bestaudio/best[height<={selected_res}]/best',
         'merge_output_format': 'mp4',
@@ -289,8 +295,7 @@ async def start(client, message):
         "Hello! Main v2.1 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
-        "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it.\n\n"
-        "Example:\n`1080\nhttp://link1.com\nhttp://link2.com`"
+        "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
     )
 
 @app.on_message(filters.command("queue"))
@@ -308,26 +313,28 @@ async def show_queue(client, message):
 async def handle_links(client, message):
     lines = message.text.split('\n')
     
-    # 🔥 NAYA: Auto-Quality Detection
     auto_quality = None
     first_line = lines[0].strip()
     if first_line.isdigit():
         auto_quality = int(first_line)
-        lines = lines[1:] # Pehli line hata di kyunki wo quality thi
+        lines = lines[1:] 
 
     for url in lines:
         url = url.strip()
         if not url.startswith("http"): continue
         
-        # Agar user ne Bulk Quality daali hai, toh seedha Queue me bhej do
         if auto_quality:
             position = len(queue_display) + 1
             queue_display.append(url)
-            msg = await message.reply_text(f"⏳ Auto-Queue: {url}\n(Position: {position} | Quality: {auto_quality}p)")
-            await download_queue.put((url, message.chat.id, msg, auto_quality))
+            try:
+                msg = await message.reply_text(f"⏳ Auto-Queue: {url}\n(Position: {position} | Quality: {auto_quality}p)", disable_web_page_preview=True)
+                await download_queue.put((url, message.chat.id, msg, auto_quality))
+                await asyncio.sleep(1.5) # 🔥 FIX: Telegram Flood limits se bachne ke liye 1.5s delay
+            except Exception as e:
+                pass # Agar spam limit aa jaye toh rukega nahi
             continue
             
-        # Normal Flow (Agar Quality nahi daali toh Button dikhao)
+        # Normal Flow 
         msg = await message.reply_text(f"🔍 Fetching quality options... Please wait!")
         URL_CACHE[msg.id] = url
         
