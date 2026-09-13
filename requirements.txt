@@ -3,3 +3,4 @@ tgcrypto
 yt-dlp[default,curl-cffi]
 flask
 gunicorn
+Flask==3.0.0
