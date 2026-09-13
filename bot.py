@@ -145,11 +145,12 @@ class MyLogger(object):
 
 def get_formats(url):
     ydl_opts = {
+        'cookiefile': 'cookies.txt',
+        'nocheckcertificate': True,
         'socket_timeout': 15, 
         'retries': 3,
         'quiet': True,
         'noplaylist': True,
-        'nocheckcertificate': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
         'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
@@ -173,6 +174,8 @@ def get_formats(url):
 
 def extract_info_only(url, selected_res):
     ydl_opts = {
+        'cookiefile': 'cookies.txt',
+        'nocheckcertificate': True,
         'socket_timeout': 15, 
         'retries': 3,
         'format': f'best[height<={selected_res}]', 
@@ -242,6 +245,8 @@ def download_with_ytdlp(url, msg, selected_res, loop):
                 asyncio.run_coroutine_threadsafe(edit_message(), loop)
 
     ydl_opts = {
+        'cookiefile': 'cookies.txt',
+        'nocheckcertificate': True,
         'socket_timeout': 15, 
         'retries': 3,
         'fragment_retries': 3,
