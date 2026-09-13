@@ -11,6 +11,25 @@ import yt_dlp
 from pyrogram.errors import MessageNotModified, FloodWait
 from yt_dlp.networking.impersonate import ImpersonateTarget
 
+# 🔥 FIX FOR BACK4APP / KOYEB / WEB HOSTING: Dummy Web Server
+from flask import Flask
+from threading import Thread
+
+app_web = Flask(__name__)
+@app_web.route('/')
+def ping():
+    return "Bot is Alive and Running!"
+
+def run_web_server():
+    # Back4App defaults to port 8080 or process.env.PORT
+    port = int(os.environ.get("PORT", 8080))
+    app_web.run(host="0.0.0.0", port=port)
+
+# Start web server in background thread
+web_thread = Thread(target=run_web_server)
+web_thread.daemon = True
+web_thread.start()
+
 # ==========================================
 # 1. BOT CREDENTIALS
 # ==========================================
@@ -28,7 +47,7 @@ queue_display = []
 CANCEL_TASKS = {}
 STOP_UPLOAD = {} 
 URL_CACHE = {} 
-GLOBAL_CANCEL = False # 🔥 NAYA: Pura current task udayane ke liye global switch
+GLOBAL_CANCEL = False 
 
 def format_bytes(size):
     size = int(size)
@@ -74,7 +93,6 @@ async def progress_bar(current, total, msg, start_time, action="Uploading"):
     if GLOBAL_CANCEL or STOP_UPLOAD.get(msg.id):
         raise Exception("Upload Cancelled")
         
-    # 🔥 FIX: Agar msg channel ka hai, toh progress edit nahi karega
     if msg.chat.id < 0:
         return
 
@@ -177,7 +195,6 @@ def download_with_ytdlp(url, msg, selected_res, loop):
         if GLOBAL_CANCEL or (msg_id and CANCEL_TASKS.get(msg_id)):
             raise CancelledError("Download Cancelled")
             
-        # 🔥 FIX: Agar msg channel ka hai, toh progress edit nahi karega
         if msg.chat.id < 0:
             return
 
@@ -265,14 +282,11 @@ async def process_queue():
         task = await download_queue.get()
         url, chat_id, msg, selected_res = task  
         
-        # Reset Global Cancel for the new task
         GLOBAL_CANCEL = False
         
         if url in queue_display:
             queue_display.remove(url) 
 
-        # 🔥 FIX: Ab channel me bhi message banega, taaki stuck hone ka issue na ho. 
-        # Lekin hum progress bar usme edit nahi karenge.
         if msg is None:
             try:
                 msg = await app.send_message(chat_id, "⏳ Processing...")
@@ -289,7 +303,7 @@ async def process_queue():
 
         try:
             cancel_markup = None
-            if msg.chat.id > 0: # Only private chat gets the cancel button directly
+            if msg.chat.id > 0: 
                 cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{msg.id}")]])
             
             await msg.edit_text("🔍 Checking Direct Link...", reply_markup=cancel_markup)
@@ -349,7 +363,6 @@ async def process_queue():
                     await asyncio.sleep(2.5)
                     continue 
 
-            # Local Download Start Message
             await msg.edit_text(f"⚡ Downloading locally...\nQuality: {selected_res}p", reply_markup=cancel_markup)
             
             current_loop = asyncio.get_running_loop()
@@ -375,7 +388,6 @@ async def process_queue():
                 f"**🔗 Source:** [Original Link]({url})"
             )
 
-            # Upload Start Message
             await msg.edit_text("📤 Uploading...", reply_markup=cancel_markup)
             start_time = time.time()
             
@@ -449,7 +461,7 @@ async def process_queue():
 @app.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "Hello! Main v3.2 Premium Downloader hoon.\n\n"
+        "Hello! Main v3.3 Premium Downloader hoon.\n\n"
         "**Usage:**\n"
         "1. Send a link to choose quality.\n"
         "2. To BULK download in a specific quality, write the quality in the first line (e.g., 1080), then paste links below it."
@@ -466,17 +478,14 @@ async def show_queue(client, message):
         text += f"{i+1}. {url}\n"
     await message.reply_text(text)
 
-# 🔥 FIX: /cancelall ab poori tarah se current video ko bhi destroy kar dega
 @app.on_message(filters.command("cancelall"))
 async def cancel_all(client, message):
     global queue_display, GLOBAL_CANCEL
     
-    # Trigger global stop
     GLOBAL_CANCEL = True
     
     queue_display.clear()
     
-    # Clear background queue
     while not download_queue.empty():
         try:
             download_queue.get_nowait()
@@ -484,18 +493,15 @@ async def cancel_all(client, message):
         except:
             pass
             
-    # Forcibly kill any running download processes
     subprocess.run(["pkill", "-f", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "ffmpeg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    # Cancel all active tasks
     for msg_id in list(URL_CACHE.keys()) + list(CANCEL_TASKS.keys()) + list(STOP_UPLOAD.keys()):
         CANCEL_TASKS[msg_id] = True
         STOP_UPLOAD[msg_id] = True
         
     await message.reply_text("🗑️ **BAM!** Pura queue aur current download WIPE OUT kar diya gaya hai! Bot ab ekdum free hai! ✅")
     
-    # Reset global cancel after a slight delay
     await asyncio.sleep(2)
     GLOBAL_CANCEL = False
 
@@ -524,7 +530,6 @@ async def handle_links(client, message):
              await message.reply_text(f"✅ **Bulk Queue Active:** {len(valid_urls)} links added. Processing will show progress.")
         return
 
-    # Normal Flow (For Single Links without quality)
     for url in lines:
         url = url.strip()
         if not url.startswith("http"): continue
@@ -587,15 +592,13 @@ async def cancel_callback(client, callback_query):
     except:
         pass
 
-# ==========================================
-# 7. BOT RUNNER
-# ==========================================
 if __name__ == "__main__":
     print("========================================")
-    print("Bot is running v3.2 purely on Render Cloud!")
+    print("Bot is running v3.3 with Web Server!")
     print("Features: Ultimate Global Cancel | Smart Channel Sync")
     print("========================================")
     
     loop = asyncio.get_event_loop()
     loop.create_task(process_queue())
     app.run()
+        
