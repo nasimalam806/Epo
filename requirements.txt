@@ -4,3 +4,6 @@ yt-dlp[default,curl-cffi]
 flask
 gunicorn
 Flask==3.0.0
+# Use the absolute latest nightly build of yt-dlp directly from GitHub to fix extraction bugs
+yt-dlp @ git+https://github.com/yt-dlp/yt-dlp.git@master
+curl-cffi
