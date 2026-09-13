@@ -181,7 +181,6 @@ def extract_info_only(url, selected_res):
         'format': f'best[height<={selected_res}]', 
         'quiet': True,
         'noplaylist': True,
-        'nocheckcertificate': True,
         'impersonate': ImpersonateTarget.from_str('chrome'),
         'extractor_args': {'youtube': ['player_client=ios,android']},
         'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
